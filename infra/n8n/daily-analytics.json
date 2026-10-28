@@ -1,0 +1,12 @@
+{
+  "name": "Faceless Studio · daily analytics",
+  "active": false,
+  "settings": { "timezone": "Asia/Jakarta", "executionOrder": "v1" },
+  "nodes": [
+    { "id": "daily", "name": "Daily at 06:00 WIB", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [0, 0], "parameters": { "rule": { "interval": [{ "field": "cronExpression", "expression": "0 6 * * *" }] } } },
+    { "id": "sync", "name": "Sync connected channels", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [260, 0], "parameters": { "method": "POST", "url": "http://web:3000/api/automation/sync", "authentication": "genericCredentialType", "genericAuthType": "httpHeaderAuth", "options": { "timeout": 300000 } }, "credentials": { "httpHeaderAuth": { "id": "CONFIGURE_AFTER_IMPORT", "name": "Faceless Studio automation" } } }
+  ],
+  "connections": { "Daily at 06:00 WIB": { "main": [[{ "node": "Sync connected channels", "type": "main", "index": 0 }]] } },
+  "pinData": {},
+  "tags": []
+}

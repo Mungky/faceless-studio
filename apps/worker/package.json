@@ -1,0 +1,7 @@
+{
+  "name": "@studio/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": { "@studio/core": "*", "@studio/connectors": "*", "@studio/render-hyperframes": "*" }
+}

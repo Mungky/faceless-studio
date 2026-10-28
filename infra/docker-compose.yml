@@ -1,0 +1,85 @@
+name: faceless-studio
+services:
+  pocketbase:
+    build:
+      context: ..
+      dockerfile: infra/pocketbase/Dockerfile
+      args:
+        POCKETBASE_VERSION: 0.40.6
+    restart: unless-stopped
+    environment:
+      PB_ADMIN_EMAIL: ${PB_ADMIN_EMAIL:?Set PB_ADMIN_EMAIL}
+      PB_ADMIN_PASSWORD: ${PB_ADMIN_PASSWORD:?Set PB_ADMIN_PASSWORD}
+      STUDIO_OWNER_EMAIL: ${STUDIO_OWNER_EMAIL:?Set STUDIO_OWNER_EMAIL}
+      STUDIO_OWNER_PASSWORD: ${STUDIO_OWNER_PASSWORD:?Set STUDIO_OWNER_PASSWORD}
+      TZ: Asia/Jakarta
+    volumes:
+      - pb_data:/pb_data
+    ports:
+      - "${TAILSCALE_IP:-127.0.0.1}:8090:8090"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8090/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      POCKETBASE_URL: http://pocketbase:8090
+      NINEROUTER_URL: http://ninerouter:20128/v1
+      VAULT_ROOT: /vault
+      STUDIO_CACHE_ROOT: /cache
+      RCLONE_BIN: /usr/bin/rclone
+      RCLONE_CONFIG: /rclone/rclone.conf
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+    volumes:
+      - ${SERVER_VAULT_ROOT:-../../projects}:/vault
+      - web_cache:/cache
+      # rclone must persist refreshed OAuth tokens; restrict host ownership to UID 1000.
+      - ./data/rclone:/rclone
+    ports:
+      - "${TAILSCALE_IP:-127.0.0.1}:3000:3000"
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  n8n:
+    image: n8nio/n8n:${N8N_VERSION:-2.45.4}
+    restart: unless-stopped
+    environment:
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?Set N8N_ENCRYPTION_KEY}
+      GENERIC_TIMEZONE: Asia/Jakarta
+      TZ: Asia/Jakarta
+      N8N_SECURE_COOKIE: "false"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    ports:
+      - "${TAILSCALE_IP:-127.0.0.1}:5678:5678"
+  ninerouter:
+    image: decolua/9router:${NINEROUTER_VERSION:-0.5.111}
+    restart: unless-stopped
+    environment:
+      DATA_DIR: /app/data
+      PORT: "20128"
+      HOSTNAME: 0.0.0.0
+      NODE_ENV: production
+    volumes:
+      - router_data:/app/data
+    ports:
+      - "${TAILSCALE_IP:-127.0.0.1}:20128:20128"
+volumes:
+  pb_data:
+  web_cache:
+  n8n_data:
+  router_data:

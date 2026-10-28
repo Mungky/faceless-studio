@@ -1,0 +1,6 @@
+# Authorize interactively with `rclone config`; never commit the generated token.
+# Put the real file at infra/data/rclone/rclone.conf on the server.
+[studio-drive]
+type = drive
+scope = drive
+# token = <written by rclone config>

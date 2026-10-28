@@ -1,0 +1,476 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-28T05:23:05.056Z",
+  "title": "Design System: Faceless Studio",
+  "extensions": {
+    "colorMeta": {
+      "bg": {
+        "role": "neutral",
+        "displayName": "Bg",
+        "tonalRamp": [
+          "oklch(15% 0.0031 274.43)",
+          "oklch(26% 0.0054 274.43)",
+          "oklch(38% 0.0079 274.43)",
+          "oklch(49% 0.0083 274.43)",
+          "oklch(61% 0.0083 274.43)",
+          "oklch(72% 0.0083 274.43)",
+          "oklch(84% 0.0053 274.43)",
+          "oklch(95% 0.0017 274.43)"
+        ]
+      },
+      "sidebar": {
+        "role": "neutral",
+        "displayName": "Sidebar",
+        "tonalRamp": [
+          "oklch(15% 0.0038 276.52)",
+          "oklch(26% 0.0066 276.52)",
+          "oklch(38% 0.0096 276.52)",
+          "oklch(49% 0.0101 276.52)",
+          "oklch(61% 0.0101 276.52)",
+          "oklch(72% 0.0101 276.52)",
+          "oklch(84% 0.0065 276.52)",
+          "oklch(95% 0.0020 276.52)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Surface",
+        "tonalRamp": [
+          "oklch(15% 0.0044 277.91)",
+          "oklch(26% 0.0077 277.91)",
+          "oklch(38% 0.0112 277.91)",
+          "oklch(49% 0.0118 277.91)",
+          "oklch(61% 0.0118 277.91)",
+          "oklch(72% 0.0118 277.91)",
+          "oklch(84% 0.0075 277.91)",
+          "oklch(95% 0.0024 277.91)"
+        ]
+      },
+      "raised": {
+        "role": "neutral",
+        "displayName": "Raised",
+        "tonalRamp": [
+          "oklch(15% 0.0050 278.97)",
+          "oklch(26% 0.0086 278.97)",
+          "oklch(38% 0.0126 278.97)",
+          "oklch(49% 0.0133 278.97)",
+          "oklch(61% 0.0133 278.97)",
+          "oklch(72% 0.0133 278.97)",
+          "oklch(84% 0.0085 278.97)",
+          "oklch(95% 0.0027 278.97)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Line",
+        "tonalRamp": [
+          "oklch(15% 0.0062 275.47)",
+          "oklch(26% 0.0107 275.47)",
+          "oklch(38% 0.0157 275.47)",
+          "oklch(49% 0.0165 275.47)",
+          "oklch(61% 0.0165 275.47)",
+          "oklch(72% 0.0165 275.47)",
+          "oklch(84% 0.0106 275.47)",
+          "oklch(95% 0.0033 275.47)"
+        ]
+      },
+      "line-soft": {
+        "role": "neutral",
+        "displayName": "Line Soft",
+        "tonalRamp": [
+          "oklch(15% 0.0057 274.28)",
+          "oklch(26% 0.0098 274.28)",
+          "oklch(38% 0.0144 274.28)",
+          "oklch(49% 0.0151 274.28)",
+          "oklch(61% 0.0151 274.28)",
+          "oklch(72% 0.0151 274.28)",
+          "oklch(84% 0.0097 274.28)",
+          "oklch(95% 0.0030 274.28)"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Text",
+        "tonalRamp": [
+          "oklch(15% 0.0026 268.55)",
+          "oklch(26% 0.0046 268.55)",
+          "oklch(38% 0.0067 268.55)",
+          "oklch(49% 0.0070 268.55)",
+          "oklch(61% 0.0070 268.55)",
+          "oklch(72% 0.0070 268.55)",
+          "oklch(84% 0.0045 268.55)",
+          "oklch(95% 0.0014 268.55)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted",
+        "tonalRamp": [
+          "oklch(15% 0.0082 276.82)",
+          "oklch(26% 0.0143 276.82)",
+          "oklch(38% 0.0208 276.82)",
+          "oklch(49% 0.0219 276.82)",
+          "oklch(61% 0.0219 276.82)",
+          "oklch(72% 0.0219 276.82)",
+          "oklch(84% 0.0140 276.82)",
+          "oklch(95% 0.0044 276.82)"
+        ]
+      },
+      "quiet": {
+        "role": "neutral",
+        "displayName": "Quiet",
+        "tonalRamp": [
+          "oklch(15% 0.0100 272.56)",
+          "oklch(26% 0.0173 272.56)",
+          "oklch(38% 0.0253 272.56)",
+          "oklch(49% 0.0266 272.56)",
+          "oklch(61% 0.0266 272.56)",
+          "oklch(72% 0.0266 272.56)",
+          "oklch(84% 0.0170 272.56)",
+          "oklch(95% 0.0053 272.56)"
+        ]
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "Accent",
+        "tonalRamp": [
+          "oklch(15% 0.0472 287.03)",
+          "oklch(26% 0.0818 287.03)",
+          "oklch(38% 0.1195 287.03)",
+          "oklch(49% 0.1258 287.03)",
+          "oklch(61% 0.1258 287.03)",
+          "oklch(72% 0.1258 287.03)",
+          "oklch(84% 0.0805 287.03)",
+          "oklch(95% 0.0252 287.03)"
+        ]
+      },
+      "accent-bg": {
+        "role": "primary",
+        "displayName": "Accent Bg",
+        "tonalRamp": [
+          "oklch(15% 0.0164 289.03)",
+          "oklch(26% 0.0284 289.03)",
+          "oklch(38% 0.0414 289.03)",
+          "oklch(49% 0.0436 289.03)",
+          "oklch(61% 0.0436 289.03)",
+          "oklch(72% 0.0436 289.03)",
+          "oklch(84% 0.0279 289.03)",
+          "oklch(95% 0.0087 289.03)"
+        ]
+      },
+      "primary": {
+        "role": "primary",
+        "displayName": "Primary",
+        "tonalRamp": [
+          "oklch(15% 0.0628 282.95)",
+          "oklch(26% 0.1089 282.95)",
+          "oklch(38% 0.1592 282.95)",
+          "oklch(49% 0.1676 282.95)",
+          "oklch(61% 0.1676 282.95)",
+          "oklch(72% 0.1676 282.95)",
+          "oklch(84% 0.1072 282.95)",
+          "oklch(95% 0.0335 282.95)"
+        ]
+      },
+      "primary-hover": {
+        "role": "primary",
+        "displayName": "Primary Hover",
+        "tonalRamp": [
+          "oklch(15% 0.0607 284.26)",
+          "oklch(26% 0.1052 284.26)",
+          "oklch(38% 0.1538 284.26)",
+          "oklch(49% 0.1619 284.26)",
+          "oklch(61% 0.1619 284.26)",
+          "oklch(72% 0.1619 284.26)",
+          "oklch(84% 0.1036 284.26)",
+          "oklch(95% 0.0324 284.26)"
+        ]
+      },
+      "green": {
+        "role": "secondary",
+        "displayName": "Green",
+        "tonalRamp": [
+          "oklch(15% 0.0280 158.28)",
+          "oklch(26% 0.0486 158.28)",
+          "oklch(38% 0.0710 158.28)",
+          "oklch(49% 0.0748 158.28)",
+          "oklch(61% 0.0748 158.28)",
+          "oklch(72% 0.0748 158.28)",
+          "oklch(84% 0.0479 158.28)",
+          "oklch(95% 0.0150 158.28)"
+        ]
+      },
+      "amber": {
+        "role": "secondary",
+        "displayName": "Amber",
+        "tonalRamp": [
+          "oklch(15% 0.0317 80.45)",
+          "oklch(26% 0.0549 80.45)",
+          "oklch(38% 0.0803 80.45)",
+          "oklch(49% 0.0845 80.45)",
+          "oklch(61% 0.0845 80.45)",
+          "oklch(72% 0.0845 80.45)",
+          "oklch(84% 0.0541 80.45)",
+          "oklch(95% 0.0169 80.45)"
+        ]
+      },
+      "red": {
+        "role": "secondary",
+        "displayName": "Red",
+        "tonalRamp": [
+          "oklch(15% 0.0378 19.60)",
+          "oklch(26% 0.0655 19.60)",
+          "oklch(38% 0.0958 19.60)",
+          "oklch(49% 0.1008 19.60)",
+          "oklch(61% 0.1008 19.60)",
+          "oklch(72% 0.1008 19.60)",
+          "oklch(84% 0.0645 19.60)",
+          "oklch(95% 0.0202 19.60)"
+        ]
+      },
+      "status-positive": {
+        "role": "secondary",
+        "displayName": "Status Positive",
+        "tonalRamp": [
+          "oklch(15% 0.0251 160.91)",
+          "oklch(26% 0.0436 160.91)",
+          "oklch(38% 0.0637 160.91)",
+          "oklch(49% 0.0671 160.91)",
+          "oklch(61% 0.0671 160.91)",
+          "oklch(72% 0.0671 160.91)",
+          "oklch(84% 0.0429 160.91)",
+          "oklch(95% 0.0134 160.91)"
+        ]
+      },
+      "status-running": {
+        "role": "secondary",
+        "displayName": "Status Running",
+        "tonalRamp": [
+          "oklch(15% 0.0354 289.52)",
+          "oklch(26% 0.0614 289.52)",
+          "oklch(38% 0.0898 289.52)",
+          "oklch(49% 0.0945 289.52)",
+          "oklch(61% 0.0945 289.52)",
+          "oklch(72% 0.0945 289.52)",
+          "oklch(84% 0.0605 289.52)",
+          "oklch(95% 0.0189 289.52)"
+        ]
+      },
+      "status-queued": {
+        "role": "secondary",
+        "displayName": "Status Queued",
+        "tonalRamp": [
+          "oklch(15% 0.0287 78.23)",
+          "oklch(26% 0.0497 78.23)",
+          "oklch(38% 0.0727 78.23)",
+          "oklch(49% 0.0765 78.23)",
+          "oklch(61% 0.0765 78.23)",
+          "oklch(72% 0.0765 78.23)",
+          "oklch(84% 0.0490 78.23)",
+          "oklch(95% 0.0153 78.23)"
+        ]
+      },
+      "status-failed": {
+        "role": "secondary",
+        "displayName": "Status Failed",
+        "tonalRamp": [
+          "oklch(15% 0.0311 19.97)",
+          "oklch(26% 0.0539 19.97)",
+          "oklch(38% 0.0787 19.97)",
+          "oklch(49% 0.0829 19.97)",
+          "oklch(61% 0.0829 19.97)",
+          "oklch(72% 0.0829 19.97)",
+          "oklch(84% 0.0530 19.97)",
+          "oklch(95% 0.0166 19.97)"
+        ]
+      },
+      "status-unavailable": {
+        "role": "secondary",
+        "displayName": "Status Unavailable",
+        "tonalRamp": [
+          "oklch(15% 0.0084 271.10)",
+          "oklch(26% 0.0146 271.10)",
+          "oklch(38% 0.0213 271.10)",
+          "oklch(49% 0.0224 271.10)",
+          "oklch(61% 0.0224 271.10)",
+          "oklch(72% 0.0224 271.10)",
+          "oklch(84% 0.0143 271.10)",
+          "oklch(95% 0.0045 271.10)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Page headline",
+        "purpose": "Compact page titles; platform sans is not a decorative display prescription."
+      },
+      "metric": {
+        "displayName": "Measurement",
+        "purpose": "Tabular metrics; tabular-nums is applied in source."
+      },
+      "mono": {
+        "displayName": "Technical text",
+        "purpose": "Code, keyboard hints, and timestamps."
+      }
+    },
+    "shadows": [
+      {
+        "name": "dialog",
+        "value": "0 24px 80px #0008",
+        "purpose": "Modal separation; backdrop #05060bc9."
+      }
+    ],
+    "motion": [
+      {
+        "name": "control-state",
+        "value": "background .14s, border-color .14s",
+        "purpose": "Button hover."
+      },
+      {
+        "name": "drawer",
+        "value": "transform .2s cubic-bezier(.16,1,.3,1)",
+        "purpose": "Mobile navigation."
+      },
+      {
+        "name": "spinner",
+        "value": "spin 1s linear infinite",
+        "purpose": "Busy state; disabled under reduced motion."
+      },
+      {
+        "name": "reduced-motion",
+        "value": ".01ms",
+        "purpose": "Animation and transition duration with prefers-reduced-motion: reduce."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "wide",
+        "value": "1600px"
+      },
+      {
+        "name": "compact-desktop",
+        "value": "1200px"
+      },
+      {
+        "name": "stack-details",
+        "value": "980px"
+      },
+      {
+        "name": "mobile",
+        "value": "720px"
+      }
+    ],
+    "tonalRampPolicy": "Synthesized OKLCH strips are panel previews only; DESIGN.md frontmatter remains the normative shipped palette."
+  },
+  "components": [
+    {
+      "name": "Primary button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Explicit next action.",
+      "html": "<button class=\"ds-primary\">Connect YouTube</button>",
+      "css": ".ds-primary{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:32px;padding:6px 11px;border:1px solid #383a46;border-radius:6px;background:#23242c;color:var(--text);font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;font-size:12px;font-weight:500;line-height:1.4;white-space:nowrap;cursor:pointer;transition:background .14s,border-color .14s;background:var(--primary);border-color:var(--primary);color:#fff}.ds-primary:hover:not(:disabled){background:#7167d4;border-color:#7167d4}.ds-primary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}.ds-primary:disabled{opacity:.45;cursor:not-allowed}"
+    },
+    {
+      "name": "Secondary button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Routine workspace action.",
+      "html": "<button class=\"ds-secondary\">Sync analytics</button>",
+      "css": ".ds-secondary{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:32px;padding:6px 11px;border:1px solid #383a46;border-radius:6px;background:#23242c;color:var(--text);font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;font-size:12px;font-weight:500;line-height:1.4;white-space:nowrap;cursor:pointer;transition:background .14s,border-color .14s}.ds-secondary:hover:not(:disabled){background:#2d2f39;border-color:#505361}.ds-secondary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}.ds-secondary:disabled{opacity:.45;cursor:not-allowed}"
+    },
+    {
+      "name": "Text button",
+      "kind": "button",
+      "refersTo": "button-text",
+      "description": "Quiet inline connection action.",
+      "html": "<button class=\"ds-text\">Connect</button>",
+      "css": ".ds-text{display:inline-flex;align-items:center;gap:6px;color:var(--muted);border:0;padding:4px 0;background:transparent;font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;font-size:12px;cursor:pointer}.ds-text:hover{color:var(--text)}.ds-text:focus-visible{outline:2px solid var(--accent);outline-offset:3px}"
+    },
+    {
+      "name": "Text field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "Inset dark field with visible keyboard focus.",
+      "html": "<input class=\"ds-field\" aria-label=\"Episode title\" placeholder=\"Episode title\">",
+      "css": ".ds-field{width:100%;min-height:35px;border:1px solid #383b47;border-radius:6px;background:#14151b;color:var(--text);padding:8px 10px;font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;font-size:14px;line-height:1.5;caret-color:var(--accent)}.ds-field::placeholder{color:#9a9eaf}.ds-field:focus-visible{outline:2px solid var(--accent);outline-offset:2px}"
+    },
+    {
+      "name": "Navigation row",
+      "kind": "nav",
+      "refersTo": "navigation-active",
+      "description": "Compact current-view marker.",
+      "html": "<nav class=\"ds-nav\"><button aria-current=\"page\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\"><path d=\"M22 12h-4l-3 9L9 3l-3 9H2\"/></svg>Analytics</button><button>Episodes</button></nav>",
+      "css": ".ds-nav{display:flex;flex-direction:column;gap:3px}.ds-nav button{display:flex;align-items:center;gap:10px;width:100%;height:34px;padding:7px 11px;background:transparent;border:0;border-radius:6px;color:#b8bbc8;text-align:left;font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;font-size:12px;cursor:pointer}.ds-nav button:hover{background:#22232b;color:var(--text)}.ds-nav button[aria-current=page]{background:var(--accent-bg);color:#ddd8ff}.ds-nav button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}"
+    },
+    {
+      "name": "Status label",
+      "kind": "chip",
+      "refersTo": "status",
+      "description": "Noninteractive explicit state with outlined marker.",
+      "html": "<span class=\"ds-status\"><span></span>Not connected</span>",
+      "css": ".ds-status{display:inline-flex;align-items:center;gap:6px;font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;font-size:10px;white-space:nowrap;color:#a1a6b5;text-transform:capitalize}.ds-status>span{width:6px;height:6px;border:1px solid currentColor;border-radius:50%;flex-shrink:0}"
+    },
+    {
+      "name": "Episode card",
+      "kind": "card",
+      "refersTo": "episode-card",
+      "description": "Compact actionable episode record.",
+      "html": "<button class=\"ds-card\"><span>Script</span><strong>Episode title</strong></button>",
+      "css": ".ds-card{display:flex;flex-direction:column;gap:10px;width:100%;padding:14px;background:#22232c;border:1px solid #343641;border-radius:7px;color:var(--text);text-align:left;margin-bottom:10px;font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;cursor:pointer}.ds-card>span{font-size:10px}.ds-card strong{font-size:12px;line-height:1.5;font-weight:500}.ds-card:hover{border-color:#706795}.ds-card:focus-visible{outline:2px solid var(--accent);outline-offset:3px}"
+    },
+    {
+      "name": "Dialog container",
+      "kind": "custom",
+      "refersTo": "dialog",
+      "description": "Preview of the modal body; native dialog handles backdrop in the app.",
+      "html": "<section class=\"ds-dialog\" role=\"dialog\" aria-label=\"Review estimate\"><h2>Review estimate</h2><p>Approve the estimate before generation.</p></section>",
+      "css": ".ds-dialog{width:calc(100% - 36px);max-width:490px;max-height:85dvh;overflow:auto;padding:24px;border:1px solid #41414f;border-radius:12px;background:#1d1e27;color:var(--text);box-shadow:0 24px 80px #0008;font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif}.ds-dialog h2{margin:0 0 24px;font-size:16px;font-weight:500}.ds-dialog p{font-size:12px;color:#b9bdcc;line-height:1.6}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The quiet working dashboard",
+    "overview": "The shipped Operate world follows the owner's explicit Linear reference: graphite grounds, restrained violet selection, compact navigation, and familiar web controls. Information and next actions carry the hierarchy. English copy and honest connection states make this a working private studio.\n\nThe build uses flat digital surfaces and consistent outline icons. It has no shipping raster artwork and no approved visual comp; source and rendered captures establish the system.",
+    "keyCharacteristics": [
+      "Compact sidebar and focused detail panels.",
+      "Dense tables with tabular measurements.",
+      "Quiet surface changes and thin separators.",
+      "Violet selection and explicit status text.",
+      "Responsive stacking with deliberate horizontal table scrolling."
+    ],
+    "rules": [
+      {
+        "name": "The Violet State Rule",
+        "body": "Use violet for selection, primary actions, focus, and the retention trace; preserve semantic colors for operational status.",
+        "section": "colors"
+      },
+      {
+        "name": "The Measured Numbers Rule",
+        "body": "Use tabular numerals for metrics and spending totals, and monospace for timestamps and code.",
+        "section": "typography"
+      },
+      {
+        "name": "The Preserve Readability Rule",
+        "body": "Stack detail regions and scroll wide tables at small widths, retaining the hierarchy and readable controls.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat Workspace Rule",
+        "body": "Use tonal layering and borders for resting work areas; reserve the shipped diffuse shadow for dialogs.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do retain the compact sidebar, clear text hierarchy, and thin separators.",
+      "Do pair every operational status color with a readable state label.",
+      "Do keep measurements tabular and timestamps monospace.",
+      "Do preserve accent focus outlines and reduced-motion behavior.",
+      "Do show unavailable measurements as em dashes with an actionable explanation."
+    ],
+    "donts": [
+      "Don't replace the confirmed quiet dashboard world with decorative display typography or raster decoration.",
+      "Don't use shadows to separate ordinary workspace panels.",
+      "Don't present fabricated performance values as live metrics."
+    ]
+  }
+}

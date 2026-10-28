@@ -1,0 +1,8 @@
+{
+  "name": "@studio/render-hyperframes",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": { "@studio/core": "*", "@studio/connectors": "*", "hyperframes": "0.8.209", "gsap": "3.13.0" }
+}

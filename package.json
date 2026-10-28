@@ -1,0 +1,29 @@
+{
+  "name": "faceless-studio",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "node scripts/web.mjs dev",
+    "build": "node scripts/web.mjs build",
+    "start": "node scripts/web.mjs start",
+    "worker": "node --env-file-if-exists=.env --import tsx apps/worker/src/index.ts",
+    "flow:bridge": "tsx scripts/flow-bridge.mts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "test:integration": "node scripts/test-integration.mjs",
+    "test:render": "tsx scripts/test-render.mts",
+    "test:operations": "node --test scripts/test-operations.mjs scripts/test-backup-native.mjs scripts/test-retention.mjs",
+    "setup:local": "node scripts/setup-local.mjs",
+    "dev:db": "node --env-file-if-exists=.env scripts/pocketbase.mjs",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  }
+}

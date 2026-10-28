@@ -1,0 +1,15 @@
+# Operational completion task
+
+Read this first. It is the scoped task for the operational worker; do not read or re-implement the whole plan.
+
+You own ONLY scripts/ (except setup-local.mjs, pocketbase.mjs, test-integration.mjs), infra/ (except pocketbase/pb_hooks and pb_migrations), README.md, docs/DEPLOYMENT.md, docs/CONNECTORS.md, docs/ACCEPTANCE.md and docs/operations-report.md. Do not modify frontend, core/connectors, API routes or server files. You are not alone; preserve others' edits. Do not spawn other agents or commit.
+
+Complete practical operation of the app already in this directory:
+
+1. Add a CLI backup script using PocketBase's documented authenticated backup API, then rclone copy to Drive. No actual remote uploads during implementation. Secrets come only from .env; never print them. Prefer a consistent PB-generated backup, not copying live SQLite. Add a daily n8n backup workflow or a documented single-command scheduling method that works on headless Ubuntu. Use existing scripts and package workspace conventions.
+2. Add safe vault Git sync tooling for an existing user-configured private remote: check the actual vault repo, never force-reset/push, detect dirty/conflicting states and report recovery steps. Do not initialize or change the user's existing vault or Git remote now. Provide Obsidian Git setup and a headless server sync approach; only Markdown/config belongs in Git, large media remains in Drive.
+3. Verify Docker image tags against primary registries/official sources; fix invalid references and the SERVER_VAULT_ROOT path (current .env.example says ../projects whereas compose base is infra). You may edit .env.example only for SERVER_VAULT_ROOT and new operational config fields; preserve generated .env secrets. Do not run Docker up: the local daemon is not running, and no server access is provided.
+4. Write concise README and detailed deployment/connector/acceptance docs. Important confirmed facts: ThinkCentre i7 gen7/16GB, Zorin now -> headless Ubuntu Server later, Docker/Tailscale already on server; Obsidian Git; English app; Linear reference; Flow through existing flow-connector-cli on Windows with signed-in visible browser; flexible providers/limits; no auto-publish. Never claim integration acceptance without live evidence. Explain setup: npm ci, npm run setup:local, dev:db and dev; login in .env; worker env separate on laptop; Tailscale binding, not public0.0.0.0; Google consent In production; connect each of3 channels with readonly scopes; configure rclone and9Router; budget defaults0.
+5. Make published+30day clip retention a safe explicit dry-run tool or document as pending rather than deleting any Drive/vault files. Preserve final renders and VO.
+
+Tests/validation: docker compose --env-file .env -f infra/docker-compose.yml config --quiet; Node syntax checks for new scripts; no paid calls, no secret values output, no system service installation. Record exact commands/outcomes and remaining external setup in docs/operations-report.md. Return a compact summary.

@@ -1,0 +1,14 @@
+[Unit]
+Description=Faceless Studio PocketBase backup to Drive
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=studio
+Group=studio
+WorkingDirectory=/opt/faceless-studio
+ExecStart=/usr/bin/node /opt/faceless-studio/scripts/backup.mjs --run --env-file /opt/faceless-studio/.env
+UMask=0077
+NoNewPrivileges=true
+TimeoutStartSec=45min

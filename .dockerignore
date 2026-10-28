@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+**/.next
+.env
+.env.*
+.runtime
+.cache
+.backups
+.logs
+.retention
+.impeccable
+*.log
+.git
+infra/data
