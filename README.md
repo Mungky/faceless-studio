@@ -41,6 +41,7 @@ Validation commands are `npm run typecheck`, `npm test`, `npm run test:integrati
 
 ## Operations
 
+- [Coolify + GitHub App](docs/COOLIFY.md): private deployment, exact build settings, server storage and runtime variables using `compose.coolify.yml`.
 - [Deployment](docs/DEPLOYMENT.md): ThinkCentre, Tailscale, Ubuntu, Windows worker, backup and Git sync.
 - [Connectors](docs/CONNECTORS.md): Google consent, three read-only channel authorizations, rclone, 9Router, ElevenLabs, Flow and ACE-Step.
 - [Acceptance](docs/ACCEPTANCE.md): commands and live checks; external integrations remain pending until tested.

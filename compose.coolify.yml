@@ -1,0 +1,83 @@
+# Coolify GitHub App deployment. The repository root is the build context.
+# Runtime secrets are entered in Coolify; this stack does not need a checked-in .env.
+services:
+  pocketbase:
+    build:
+      context: .
+      dockerfile: infra/pocketbase/Dockerfile
+      args:
+        POCKETBASE_VERSION: 0.40.6
+    restart: unless-stopped
+    environment:
+      PB_ADMIN_EMAIL: ${PB_ADMIN_EMAIL:-admin@studio.local}
+      PB_ADMIN_PASSWORD: ${PB_ADMIN_PASSWORD:?Set PB_ADMIN_PASSWORD}
+      STUDIO_OWNER_EMAIL: ${STUDIO_OWNER_EMAIL:-owner@studio.local}
+      STUDIO_OWNER_PASSWORD: ${STUDIO_OWNER_PASSWORD:?Set STUDIO_OWNER_PASSWORD}
+      TZ: Asia/Jakarta
+    volumes:
+      - pb_data:/pb_data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8090/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_URL: ${APP_URL:?Set the browser-visible Studio URL}
+      POCKETBASE_URL: http://pocketbase:8090
+      PB_ADMIN_EMAIL: ${PB_ADMIN_EMAIL:-admin@studio.local}
+      PB_ADMIN_PASSWORD: ${PB_ADMIN_PASSWORD:?Set PB_ADMIN_PASSWORD}
+      WORKER_TOKEN: ${WORKER_TOKEN:?Set WORKER_TOKEN}
+      AUTOMATION_TOKEN: ${AUTOMATION_TOKEN:?Set AUTOMATION_TOKEN}
+      OAUTH_ENCRYPTION_KEY: ${OAUTH_ENCRYPTION_KEY:?Set a 64-character hexadecimal OAUTH_ENCRYPTION_KEY}
+      VAULT_ROOT: /vault
+      STUDIO_CACHE_ROOT: /cache
+      RCLONE_BIN: /usr/bin/rclone
+      RCLONE_CONFIG: /rclone/rclone.conf
+      RCLONE_REMOTE: ${RCLONE_REMOTE:-}
+      NINEROUTER_URL: ${NINEROUTER_URL:-}
+      NINEROUTER_API_KEY: ${NINEROUTER_API_KEY:-}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-}
+      ELEVENLABS_MODEL_ID: ${ELEVENLABS_MODEL_ID:-eleven_v3}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
+      ACESTEP_URL: ${ACESTEP_URL:-}
+      ACESTEP_API_KEY: ${ACESTEP_API_KEY:-}
+      GENERATOR_WEBHOOK_URL: ${GENERATOR_WEBHOOK_URL:-}
+      GENERATOR_WEBHOOK_TOKEN: ${GENERATOR_WEBHOOK_TOKEN:-}
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+      TZ: Asia/Jakarta
+    volumes:
+      - type: bind
+        source: ${SERVER_VAULT_ROOT:?Set an existing absolute server vault path}
+        target: /vault
+        bind:
+          create_host_path: false
+      - web_cache:/cache
+      - type: bind
+        source: ${SERVER_RCLONE_ROOT:-/srv/faceless-studio/rclone}
+        target: /rclone
+        bind:
+          create_host_path: false
+    ports:
+      - "${STUDIO_BIND_IP:-127.0.0.1}:${STUDIO_HTTP_PORT:-3100}:3000"
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+volumes:
+  pb_data:
+  web_cache:
