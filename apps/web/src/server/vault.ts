@@ -1,6 +1,6 @@
 import "server-only";
 import path from "node:path";
-import { mkdir, readFile, writeFile, rename, realpath, access, copyFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rename, realpath, access, copyFile, readdir, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { segment, recordId, type Beat, parseStoryboard, serializeStoryboard, z } from "@studio/core";
 
@@ -42,6 +42,11 @@ export async function writeDocument(folder: string, name: DocumentName, content:
   await writeFile(temporary, content, { flag: "wx" }); await rename(temporary, target);
 }
 export async function readPlaybook(relative: string) { return readFile(await safeVaultPath(relative), "utf8"); }
+export async function documentHistory(folder:string,name:DocumentName){
+  const root=await safeVaultPath(folder+"/.studio-history",true);let names:string[];try{names=await readdir(root);}catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return [];throw error;}
+  const suffix="-"+name;const rows=await Promise.all(names.filter(n=>/^\d{13}-[a-f0-9]{8}-/.test(n)&&n.endsWith(suffix)).sort().reverse().slice(0,100).map(async id=>{const file=await safeVaultPath(folder+"/.studio-history/"+id);const info=await stat(file);return {id,created:new Date(Number(id.slice(0,13))).toISOString(),bytes:info.size};}));return rows;
+}
+export async function historicalDocument(folder:string,name:DocumentName,id:string){if(!/^\d{13}-[a-f0-9]{8}-/.test(id)||!id.endsWith("-"+name)||!documentNames.includes(name))throw new Error("Invalid document revision");return readFile(await safeVaultPath(folder+"/.studio-history/"+segment.parse(id)),"utf8");}
 export async function readBeats(folder: string) { return parseStoryboard(await readDocument(folder, "storyboard.md")); }
 export async function readStoryboardState(folder: string, savedContent?: string) {
   const content = savedContent ?? await readDocument(folder, "storyboard.md");

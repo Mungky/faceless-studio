@@ -1,0 +1,7 @@
+import type {AgentReport,ChannelPreferences,ScheduledTask,TemplateProposal,WorkflowRun,WorkflowTemplate} from "@studio/core";
+export interface WorkspaceData {templates:WorkflowTemplate[];runs:WorkflowRun[];preferences:ChannelPreferences[];connections:{searxng:boolean;obscura:boolean};reports:AgentReport[];proposals:TemplateProposal[];tasks:ScheduledTask[];}
+export type Perform=(action:()=>Promise<void>)=>Promise<void>;
+export interface WorkspaceLocation {view:"channel"|"studio"|"fyp";channel:string;tab:string;video:string;episode:string;run:string;}
+export const initialLocation:WorkspaceLocation={view:"channel",channel:"",tab:"analytics",video:"",episode:"",run:""};
+export function readWorkspaceLocation(search:string):WorkspaceLocation{const p=new URLSearchParams(search),view=p.get("view"),valid=(v:string|null)=>v&&/^[a-zA-Z0-9]{15}$/.test(v)?v:"";return {view:view==="studio"?"studio":view==="fyp"?"fyp":"channel",channel:valid(p.get("channel")||p.get("project")),tab:view==="connections"?"settings":p.get("tab")||"analytics",video:/^[a-zA-Z0-9_-]{11}$/.test(p.get("video")||"")?p.get("video")!:"",episode:valid(p.get("episode")),run:valid(p.get("run"))};}
+export function workspaceUrl(value:WorkspaceLocation){const p=new URLSearchParams({view:value.view});for(const key of ["channel","tab","video","episode","run"] as const)if(value[key])p.set(key,value[key]);return "/?"+p.toString();}

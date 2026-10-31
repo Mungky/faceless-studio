@@ -5,6 +5,7 @@ export * from "./elevenlabs";
 export * from "./acestep";
 export * from "./flow";
 export * from "./youtube";
+export * from "./research";
 
 export async function jsonFetch<T>(url: string | URL, init: RequestInit = {}): Promise<T> {
   const response = await fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(60_000) });

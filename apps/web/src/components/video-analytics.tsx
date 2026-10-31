@@ -7,11 +7,12 @@ import {DailyChart,Breakdown,Demographics,Metric,SectionEmpty,sectionMessage,fri
 import {RetentionChart} from "./analytics";
 
 type Range={start:string;end:string};
-type Props={data:Dashboard;channel:Channel;videoId:string;onVideoChange:(id:string)=>void;busy:boolean;run:(fn:()=>Promise<void>)=>Promise<void>;refresh:()=>Promise<void>;openEpisode:(id:string)=>void;quote:(input:QuoteRequest)=>void};
+type Props={data:Dashboard;channel:Channel;videoId:string;onVideoChange:(id:string)=>void;busy:boolean;run:(fn:()=>Promise<void>)=>Promise<void>;refresh:()=>Promise<void>;openEpisode:(id:string)=>void;quote:(input:QuoteRequest)=>void;onRangeChange?:(range:Range)=>void};
 const day=(value:string)=>new Intl.DateTimeFormat("en",{month:"short",day:"numeric",year:"numeric",timeZone:"UTC"}).format(new Date(value+"T12:00:00Z"));
 const fail=(cause:unknown)=>cause instanceof Error?cause.message:"YouTube data could not be loaded. Try Sync again.";
-export function VideoAnalytics({data,channel,videoId,onVideoChange,busy,run,refresh,openEpisode,quote}:Props){
+export function VideoAnalytics({data,channel,videoId,onVideoChange,busy,run,refresh,openEpisode,quote,onRangeChange}:Props){
   const [range,setRange]=useState<Range>(()=>reportRange(28)),[draft,setDraft]=useState<Range>(()=>reportRange(28)),[preset,setPreset]=useState("28");
+  useEffect(()=>{onRangeChange?.(range);},[range.start,range.end,onRangeChange]);
   const [catalog,setCatalog]=useState<ProjectData|null>(null),[catalogError,setCatalogError]=useState(""),[query,setQuery]=useState(""),[showAll,setShowAll]=useState(false);
   const [loaded,setLoaded]=useState<{key:string;value:VideoAnalyticsData}|null>(null),[loading,setLoading]=useState(false),[syncing,setSyncing]=useState(false),[error,setError]=useState(""),[rangeError,setRangeError]=useState("");
   const [ratio,setRatio]=useState(0),[detail,setDetail]=useState<Detail|null>(null),[importing,setImporting]=useState(false);

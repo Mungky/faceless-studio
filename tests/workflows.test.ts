@@ -39,7 +39,7 @@ async function fixture(t:TestContext) {
   mock.method(db,"get",async (name:string,id:string)=>{const data=table(name).get(id);if(!data)throw Object.assign(new Error("Not found"),{status:404});return structuredClone(data);});
   mock.method(db,"list",async(name:string,filter="")=>{
     let values=[...table(name).values()];
-    for(const field of ["key","episode","quote","task"]){const match=new RegExp(`${field}=(\"[^\"]*\")`).exec(filter);if(match) values=values.filter(v=>v[field]===JSON.parse(match[1]));}
+    for(const field of ["key","episode","quote","task"]){const match=new RegExp(`(?:^|\\s)${field}=(\"[^\"]*\")`).exec(filter);if(match) values=values.filter(v=>v[field]===JSON.parse(match[1]));}
     return structuredClone(values);
   });
   mock.method(db,"create",async(name:string,body:any)=>{const value={...structuredClone(body),id:String(++sequence).padStart(15,"0"),created:new Date().toISOString(),updated:new Date().toISOString()};table(name).set(value.id,value);return structuredClone(value);});
@@ -50,6 +50,57 @@ async function fixture(t:TestContext) {
   return {api,table,directory,get calls(){return calls;}};
 }
 const owner="owner0000000001";
+test("editing an approved manual script returns the saved text to exact review without a provider",async t=>{
+  const f=await fixture(t);let p=await f.api.createWorkflowRun({template:"arthur",title:"Manual revision",brief:"Own script",entry_mode:"script",content:"Original manual text."},owner);
+  p=await f.api.actWorkflowRun(p.run.id,{action:"review",node_id:"script",document_revision:p.detail.revisions["script.md"],expected_revision:p.run.revision},owner);
+  await writeFile(path.join(f.directory,p.detail.episode.vault_path,"script.md"),"Edited manual text.");
+  p=await f.api.actWorkflowRun(p.run.id,{action:"sync",node_id:"script",expected_revision:p.run.revision},owner);
+  assert.equal(p.run.states.script.status,"waiting_review");assert.equal(p.run.states.script.output,"Edited manual text.");assert.equal(f.calls,0);
+  p=await f.api.actWorkflowRun(p.run.id,{action:"review",node_id:"script",document_revision:p.detail.revisions["script.md"],expected_revision:p.run.revision},owner);assert.equal(p.detail.episode.script_approved,true);
+});
+test("durable scheduled creation keys reconcile one production after repeated triggers",async t=>{
+  const f=await fixture(t),input={template:"arthur",title:"Scheduled fixture",brief:"A bounded research direction",request_key:"production:arthur000000001:2026-10-31:1900"};
+  const first=await f.api.createWorkflowRun(input,owner),again=await f.api.createWorkflowRun(input,owner);assert.equal(again.run.id,first.run.id);assert.equal(f.table("episodes").size,1);
+});
+test("scheduled creation recovers the original episode when run persistence was interrupted",async t=>{
+  const f=await fixture(t),{db}=await import("../apps/web/src/server/pocketbase"),create=db.create.bind(db);let fail=true;
+  const wrapped=mock.method(db,"create",async(name:string,body:any)=>{if(name==="workflow_runs"&&fail){fail=false;throw new Error("Simulated persistence interruption");}return create(name,body);});
+  const input={template:"arthur",title:"Interrupted creation",brief:"Keep this formula",request_key:"production:arthur000000001:2026-10-31:0600"};await assert.rejects(f.api.createWorkflowRun(input,owner),/could not be saved/);assert.equal(f.table("episodes").size,1);const recovered=await f.api.createWorkflowRun(input,owner);assert.equal(f.table("episodes").size,1);assert.equal(recovered.run.request_key,input.request_key);assert.match(recovered.run.playbook_snapshot,/Existing Arthur/);
+  wrapped.mock.restore();
+});
+test("edited template content is stored separately from the original vault and frozen for new runs",async t=>{
+  const f=await fixture(t);const original=await f.api.workflowTemplate("arthur");
+  const saved=await f.api.saveWorkflowTemplate("arthur",{...original,playbook_content:"A new template without editing the original file.",expected_version:original.version});
+  const run=await f.api.createWorkflowRun({template:saved.id,title:"Edited content",brief:"Test content"},owner);
+  assert.equal(run.run.playbook_snapshot,"A new template without editing the original file.");
+  assert.equal(await (await import("node:fs/promises")).readFile(path.join(f.directory,"Arthur","Arthur.md"),"utf8"),"Existing Arthur playbook. Stop for research, script and visual-plan approval.");
+});
+
+test("manual episode entry preserves exact text and freezes template and playbook version",async t=>{
+  const f=await fixture(t);
+  const manual="PRESENTER\nBriking Nius!  Jangan ubah   spasi.\n\nWOKWI\nItu punchline saya.";
+  const template=await f.api.workflowTemplate("arthur");
+  const created=await f.api.createWorkflowRun({template:"arthur",channel:"arthur000000001",title:"Manual entry",brief:"Review only",entry_mode:"script",content:manual},owner);
+  assert.equal(created.detail.documents["script.md"],manual);
+  assert.equal(created.run.states.script.status,"waiting_review");
+  assert.equal(created.run.states.research.provided_by_user,true);
+  assert.equal(created.run.template_version,template.version);
+  assert.match(created.run.playbook_snapshot,/Existing Arthur/);
+  await writeFile(path.join(f.directory,"Arthur","Arthur.md"),"A later playbook that must not change this episode.");
+  const read=await f.api.workflowRunData(created.run.id);
+  assert.match(read.run.playbook_snapshot,/Existing Arthur/);
+  assert.equal(read.detail.episode.script_meta.workflow_context.playbook_snapshot,created.run.playbook_snapshot);
+  assert.equal(f.calls,0);
+});
+
+test("template override keeps the selected destination channel",async t=>{
+  const f=await fixture(t);
+  f.table("channels").set("notyet000000001",{id:"notyet000000001",name:"Not Yet",playbook_path:""});
+  const created=await f.api.createWorkflowRun({template:"arthur",channel:"notyet000000001",title:"Explicit alternate template",brief:"Use the selected template on my destination channel"},owner);
+  assert.equal(created.run.channel,"notyet000000001");
+  assert.equal(created.detail.episode.channel,"notyet000000001");
+  assert.equal(created.run.template_id,"arthur");
+});
 test("workflow GET is read-only and library never imports legacy episodes as runs",async t=>{
   const f=await fixture(t);assert.equal(typeof f.api.workflowLibrary,"function","Workflow server exists");
   f.table("episodes").set("legacy000000001",{youtube_video_id:"abcdefghijk"});
@@ -125,7 +176,7 @@ test("native workflow collections keep templates, snapshots and chat private",{s
   const base=process.env.STUDIO_TEST_PB_URL!;const priorVault=process.env.VAULT_ROOT;
   await mkdir(path.resolve(".runtime"),{recursive:true});const directory=await mkdtemp(path.resolve(".runtime/native-workflow-"));process.env.VAULT_ROOT=directory;
   await mkdir(path.join(directory,"Arthur"),{recursive:true});await writeFile(path.join(directory,"Arthur/Arthur.md"),"Native fixture playbook");
-  const {StudioDatabase,db}=await import("../apps/web/src/server/pocketbase");const native=new StudioDatabase(base);mock.method(db,"request",native.request.bind(native));
+  const {StudioDatabase,db}=await import("../apps/web/src/server/pocketbase");const native=new StudioDatabase(base);mock.restoreAll();for(const key of ["get","list","create","update","custom"])if(Object.hasOwn(db,key))delete (db as any)[key];mock.method(db,"request",native.request.bind(native));
   t.after(async()=>{mock.restoreAll();if(priorVault===undefined)delete process.env.VAULT_ROOT;else process.env.VAULT_ROOT=priorVault;await rm(directory,{recursive:true,force:true});});
   const api=await import("../apps/web/src/server/workflows");
   for(const name of ["workflow_templates","workflow_runs"]){const response=await fetch(`${base}/api/collections/${name}/records`);assert.equal(response.status,403);}

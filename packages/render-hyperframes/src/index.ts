@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import type { RenderEngine, RenderInput } from "@studio/core";
 import { run } from "@studio/connectors";
+export * from "./composition";
 
 const require = createRequire(import.meta.url);
 export function escapeHtml(value: string) { return value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]!)); }

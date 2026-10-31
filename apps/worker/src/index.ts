@@ -2,9 +2,9 @@ import os from "node:os";
 import path from "node:path";
 import { mkdir, copyFile, realpath } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
-import { type Job, type Worker, type Beat, type Asset, recordId } from "@studio/core";
+import { type Job, type Worker, type Beat, type Asset, type CompositionSource, recordId } from "@studio/core";
 import { DriveConnector, ACEStepConnector, FlowConnector, run, requireCappedFlow } from "@studio/connectors";
-import { HyperFramesEngine } from "@studio/render-hyperframes";
+import { HyperFramesEngine,renderCodeComposition } from "@studio/render-hyperframes";
 
 const server = (process.env.WORKER_SERVER_URL || "http://127.0.0.1:3100").replace(/\/$/, "");
 const token = process.env.WORKER_TOKEN;
@@ -42,6 +42,7 @@ async function execute(job: Job) {
   const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(7_200_000)]);
   try {
     const payload = job.payload; const driveBase = String(payload.drive_base || "");
+    if(payload.composition)await api("jobs/"+job.id+"/validate",{worker_id:worker!.id});
     if (!driveBase.startsWith("Faceless/") || driveBase.includes("..")) throw new Error("Invalid episode Drive folder");
     let output: string, kind: Asset["kind"], source: string;
     if (job.type === "music") {
@@ -71,7 +72,17 @@ async function execute(job: Job) {
       }
       kind = "render"; source = job.type === "ffmpeg" ? "ffmpeg" : "render";
       if (job.type === "render") {
+        if(payload.composition){
+          const mode=payload.composition_mode==="storyboard"?"storyboard":"render";
+          if(mode==="render"){
+            const takes=assets.filter(a=>a.kind==="vo");if(takes.length!==1)throw new Error("Composition render requires one narration take.");
+            const probe=JSON.parse(await run("ffprobe",["-v","error","-show_format","-of","json",audio[0]],{signal}));if(!Number.isFinite(Number(probe.format?.duration))||Number(probe.format.duration)>(payload.composition as CompositionSource).duration+.05)throw new Error("Narration would be truncated by this composition. Extend the animation and review it again.");
+          }
+          output=await renderCodeComposition({source:payload.composition as CompositionSource,hash:String(payload.composition_hash),mode,time:Number(payload.time||0),audioPaths:audio},path.join(directory,"composition-"+Date.now()),signal,log);
+          if(mode==="storyboard")kind="image";
+        }else{
         output = await new HyperFramesEngine().render({ title: String(payload.title || "Episode"), beats: payload.beats as Beat[], width: payload.format === "long" ? 1920 : 1080, height: payload.format === "long" ? 1080 : 1920, fps: 24, assetPaths: paths, audioPaths: audio }, path.join(directory, "composition"), signal, log);
+        }
       } else {
         const video = assets.find(asset => asset.kind === "render"); if (!video) throw new Error("Select a render to transcode");
         const sourceFile = path.join(directory, "source", video.id + path.extname(video.drive_path));
@@ -84,7 +95,7 @@ async function execute(job: Job) {
     const folder = { image: "stills", video: "clips", music: "music", render: "renders" }[kind as "image" | "video" | "music" | "render"];
     const name = `${String(Number(job.payload.beat) || 1).padStart(2, "0")}_${kind}-${job.id}_v1${path.extname(output)}`;
     const saved = await drive.upload(output, `${driveBase}/${folder}/${name}`, signal);
-    await api("complete", { worker_id: worker!.id, job_id: job.id, asset: { drive_file_id: saved.id, drive_path: saved.path, kind, source, meta: { size: saved.size, beat: payload.beat, engine: job.type === "render" ? "hyperframes@0.8.209" : undefined, cache: output } } });
+    await api("complete", { worker_id: worker!.id, job_id: job.id, asset: { drive_file_id: saved.id, drive_path: saved.path, kind, source, meta: { size: saved.size, beat: payload.beat, engine: job.type === "render" ? "hyperframes@0.8.209" : undefined, composition_hash:payload.composition_hash,composition_mode:payload.composition_mode,cache: output } } });
     console.log(`Completed ${job.id}; master uploaded to Drive.`);
   } catch (error) {
     const message = (error as Error).message; console.error(`Job ${job.id}: ${message}`);

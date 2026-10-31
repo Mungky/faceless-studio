@@ -3,11 +3,11 @@ export const workflowKinds = ["brief", "research", "script", "storyboard", "voic
 export type WorkflowNodeKind = typeof workflowKinds[number];
 export interface WorkflowNode { id:string; kind:WorkflowNodeKind; title:string; instructions:string; position:{x:number;y:number}; review:boolean; provider?:"manual"|"flow"|"webhook"; media_kind?:"image"|"video"; }
 export interface WorkflowGraph { nodes:WorkflowNode[]; edges:{id:string;source:string;target:string}[]; viewport?:{x:number;y:number;zoom:number}; }
-export interface WorkflowTemplate { id:string;name:string;description:string;channel:string;playbook_path:string;instructions:string;graph:WorkflowGraph;version:string;updated:string;builtin:boolean; }
+export interface WorkflowTemplate { id:string;name:string;description:string;channel:string;playbook_path:string;playbook_content?:string;instructions:string;graph:WorkflowGraph;version:string;updated:string;builtin:boolean; }
 export type WorkflowNodeStatus = "idle"|"ready"|"running"|"waiting_approval"|"waiting_review"|"completed"|"failed"|"blocked";
-export interface WorkflowNodeState { status:WorkflowNodeStatus;quote?:{id:string;operation:string;provider:string;units:number;est_cost:number;currency:string;expires:string;note:string};job_id?:string;document?:"riset.md"|"script.md"|"storyboard.md"|"upload-pack.md";output?:string;error?:string;output_revision?:string;beat?:number; }
+export interface WorkflowNodeState { status:WorkflowNodeStatus;quote?:{id:string;operation:string;provider:string;units:number;est_cost:number;currency:string;expires:string;note:string};job_id?:string;document?:"riset.md"|"script.md"|"storyboard.md"|"upload-pack.md";output?:string;error?:string;output_revision?:string;beat?:number;provided_by_user?:boolean; }
 export interface WorkflowMessage { id:string;role:"user"|"assistant"|"system";content:string;node_id?:string;created_at:string; }
-export interface WorkflowRun {id:string;template_id:string;template_name:string;channel:string;episode:string;graph:WorkflowGraph;playbook_path:string;instructions:string;brief:string;status:"idle"|"running"|"waiting"|"completed"|"failed";states:Record<string,WorkflowNodeState>;messages:WorkflowMessage[];revision:number;created:string;updated:string;}
+export interface WorkflowRun {id:string;request_key?:string;template_id:string;template_name:string;template_version?:string;playbook_snapshot?:string;channel:string;episode:string;graph:WorkflowGraph;playbook_path:string;instructions:string;brief:string;status:"idle"|"running"|"waiting"|"completed"|"failed";states:Record<string,WorkflowNodeState>;messages:WorkflowMessage[];revision:number;created:string;updated:string;}
 export const workflowNodeInfo:Record<WorkflowNodeKind,{label:string;description:string}> = {
   brief:{label:"Brief",description:"Set the direction for this production."},
   research:{label:"Research",description:"Collect source-aware leads and verify evidence before writing."},

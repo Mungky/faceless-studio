@@ -77,11 +77,13 @@ module.exports = {
         job.set("status", "failed"); job.set("log", job.getString("log") + "\n" + String(body.error).slice(0, 20000));
       } else {
         if (!assetData || typeof assetData.drive_path !== "string" || assetData.drive_path.indexOf(payload.drive_base + "/") !== 0) throw new BadRequestError("Output must be saved in the episode Drive folder");
+        let obsolete=body.obsolete===true;
+        if(payload.composition_hash){const episode=tx.findRecordById("episodes",job.getString("episode")),meta=jsonField(episode,"script_meta",{});obsolete=obsolete||meta.composition_hash!==payload.composition_hash||!episode.getBool("script_approved")||meta.approved_revision!==payload.script_revision||(meta.document_revisions&&meta.document_revisions["storyboard.md"]&&meta.document_revisions["storyboard.md"]!==payload.storyboard_revision);assetData.meta=Object.assign({},assetData.meta,{composition_hash:payload.composition_hash,script_revision:payload.script_revision,storyboard_revision:payload.storyboard_revision,historical:obsolete});}
         const asset = new Record(tx.findCollectionByNameOrId("assets"));
         for (const key of ["drive_file_id", "drive_path", "kind", "source", "meta"]) asset.set(key, assetData[key]);
-        asset.set("episode", job.getString("episode")); asset.set("selected", true); tx.save(asset);
+        asset.set("episode", job.getString("episode")); asset.set("selected", !obsolete); tx.save(asset);
         job.set("result_asset", asset.id); job.set("progress", 100); job.set("status", "done");
-        if (job.getString("type") === "render") { const episode = tx.findRecordById("episodes", job.getString("episode")); episode.set("status", "review"); tx.save(episode); }
+        if (job.getString("type") === "render"&&payload.composition_mode!=="storyboard"&&!obsolete) { const episode = tx.findRecordById("episodes", job.getString("episode")); episode.set("status", "review"); tx.save(episode); }
         result = { asset: exported(asset, ["meta"]) };
       }
       job.set("finished", now()); tx.save(job);
