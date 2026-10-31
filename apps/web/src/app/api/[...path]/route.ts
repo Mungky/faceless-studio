@@ -1,3 +1,4 @@
+import {routerConnector,saveProviderKey,serviceConnections,saveServiceConnection,checkService} from "../../../server/provider-credentials";
 import { NextRequest, NextResponse } from "next/server";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
@@ -9,10 +10,13 @@ import { DriveConnector, ElevenLabsConnector, NineRouterConnector, YouTubeConnec
 import { db, DatabaseError, filterValue } from "../../../server/pocketbase";
 import { authenticate, checkOrigin, sessionCookie, secretMatches, encrypt } from "../../../server/auth";
 import { dashboard, configuration, episodeContext, episodeDetails, createEpisode, makeQuote, approveQuote, queueLocalJob, syncEpisode, syncAll, importSupplement, spending, spendingSchema, documentRevision } from "../../../server/service";
-import { readDocument, readBeats, writeDocument, writeBeats, documentNames, readPlaybook } from "../../../server/vault";
+import { readDocument, readBeats, writeDocument, writeBeats, documentNames, readPlaybook,documentHistory,historicalDocument } from "../../../server/vault";
 import { projectData, syncProject, syncProjectProfiles, videoAnalyticsData, syncVideoAnalytics } from "../../../server/projects";
 import { createChannel } from "../../../server/channels";
 import {workflowLibrary,workflowTemplate,createWorkflowTemplate,saveWorkflowTemplate,createWorkflowRun,workflowRunData,messageWorkflowRun,actWorkflowRun} from "../../../server/workflows";
+import {workspaceData,channelPreferences,saveChannelPreferences,createProduction,discoveryData,addCompetitor,discover,saveReference,inspectReference,generateVideoReport,proposeTemplate,decideProposal,recoverTask} from "../../../server/workspace";
+import {automationTick} from "../../../server/scheduler";
+import {compositionData,saveComposition,queueComposition,reviewComposition,compositionJobCurrent} from "../../../server/compositions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,6 +49,10 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
       result.cookies.set(sessionCookie, auth.token, { httpOnly: true, secure: new URL(process.env.APP_URL || request.url).protocol === "https:", sameSite: "lax", path: "/", maxAge: 86400 }); return result;
     }
     if (route.startsWith("worker/")) return handleWorker(request, parts.slice(1));
+    if(route==="automation/tick"&&method==="POST"){
+      if(!secretMatches(request.headers.get("authorization")?.replace(/^Bearer /,"")||"",process.env.AUTOMATION_TOKEN))return reply({error:"Unauthorized"},401);
+      return reply(await automationTick());
+    }
     if (route === "automation/sync" && method === "POST") {
       if (!secretMatches(request.headers.get("authorization")?.replace(/^Bearer /, "") || "", process.env.AUTOMATION_TOKEN)) return reply({ error: "Unauthorized" }, 401);
       return reply(await syncAll());
@@ -53,13 +61,33 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
     if (!user) return reply({ error: "Sign in to Faceless Studio." }, 401);
     if (route === "me" && method === "GET") return reply({ user });
     if (route === "logout" && method === "POST") { const response = reply({ ok: true }); response.cookies.delete(sessionCookie); return response; }
+    if(route==="settings/connections"&&method==="GET")return reply(await serviceConnections());
+    if(route==="settings/connections"&&method==="PUT")return reply(await saveServiceConnection(await body(request)));
+    if(route==="settings/connections/check"&&method==="POST")return reply(await checkService(z.object({provider:z.enum(["ninerouter","searxng","obscura"])}).parse(await body(request)).provider));
+    if(route==="settings/keys"&&method==="POST")return reply(await saveProviderKey(await body(request)));
     if (route === "dashboard" && method === "GET") return reply(await dashboard());
+    if(route==="workspace"&&method==="GET")return reply(await workspaceData());
+    if(route==="workspace/episodes"&&method==="POST")return reply(await createProduction(await body(request),user.id),201);
+    if(parts[0]==="workspace"&&parts[1]==="channels"&&parts[2]){
+      const channel=recordId.parse(parts[2]);
+      if(parts.length===3&&method==="GET")return reply(await channelPreferences(channel));
+      if(parts.length===3&&method==="PUT")return reply(await saveChannelPreferences(channel,await body(request)));
+      if(parts[3]==="discovery"&&method==="GET")return reply(await discoveryData(channel));
+      if(parts[3]==="discovery"&&method==="POST")return reply(await discover(channel,await body(request)));
+      if(parts[3]==="competitors"&&method==="POST")return reply(await addCompetitor(channel,await body(request)),201);
+      if(parts[3]==="references"&&parts[4]&&method==="PUT")return reply(await saveReference(channel,parts[4],await body(request)));
+      if(parts[3]==="references"&&parts[4]&&parts[5]==="inspect"&&method==="POST")return reply(await inspectReference(channel,parts[4]));
+      if(parts[3]==="reports"&&parts[4]&&method==="POST"){const range=z.object({start:z.string(),end:z.string()}).strict().parse(await body(request));return reply(await generateVideoReport(channel,parts[4],range));}
+      if(parts[3]==="tasks"&&parts[4]&&method==="POST")return reply(await recoverTask(channel,parts[4],await body(request)));
+      if(parts[3]==="proposals"&&parts.length===4&&method==="POST")return reply(await proposeTemplate(channel,await body(request)),201);
+      if(parts[3]==="proposals"&&parts[4]&&method==="POST")return reply(await decideProposal(channel,parts[4],await body(request)));
+    }
     if(route==="workflows"&&method==="GET")return reply(await workflowLibrary());
     if(route==="workflows"&&method==="POST")return reply(await createWorkflowTemplate(await body(request)),201);
     if(parts[0]==="workflows"&&parts[1]){
       if(parts.length===2&&method==="GET")return reply(await workflowTemplate(parts[1]));
       if(parts.length===2&&method==="PUT")return reply(await saveWorkflowTemplate(parts[1],await body(request)));
-      if(parts.length===3&&parts[2]==="playbook"&&method==="GET"){const template=await workflowTemplate(parts[1]);return reply({content:template.playbook_path?await readPlaybook(template.playbook_path):template.instructions});}
+      if(parts.length===3&&parts[2]==="playbook"&&method==="GET"){const template=await workflowTemplate(parts[1]);return reply({content:template.playbook_content??(template.playbook_path?await readPlaybook(template.playbook_path):template.instructions)});}
     }
     if(route==="workflow-runs"&&method==="POST")return reply(await createWorkflowRun(await body(request),user.id),201);
     if(parts[0]==="workflow-runs"&&parts[1]){
@@ -86,6 +114,13 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
     if (route === "episodes" && method === "POST") return reply(await createEpisode(createEpisodeSchema.parse(await body(request))), 201);
     if (parts[0] === "episodes" && parts[1]) {
       const id = recordId.parse(parts[1]);
+      if(parts[2]==="composition"){
+        if(parts.length===3&&method==="GET")return reply(await compositionData(id));
+        if(parts.length===3&&method==="PUT")return reply(await saveComposition(id,await body(request)));
+        if(parts[3]==="queue"&&method==="POST"){const input=z.object({mode:z.enum(["storyboard","render"])}).strict().parse(await body(request));return reply(await queueComposition(id,input.mode));}
+        if(parts[3]==="review"&&method==="POST")return reply(await reviewComposition(id,await body(request)));
+      }
+      if(parts[2]==="history"&&method==="GET"){const {episode}=await episodeContext(id);const name=z.enum(documentNames).parse(request.nextUrl.searchParams.get("name"));const revision=request.nextUrl.searchParams.get("revision");return reply(revision?{content:await historicalDocument(episode.vault_path,name,revision)}:await documentHistory(episode.vault_path,name));}
       if (parts.length === 2 && method === "GET") return reply(await episodeDetails(id));
       if (parts.length === 2 && method === "PATCH") {
         const { script_revision, ...update } = updateEpisodeSchema.parse(await body(request));
@@ -109,7 +144,8 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
         const { episode } = await episodeContext(id); const current = await readDocument(episode.vault_path, input.name);
         if (createHash("sha256").update(current).digest("hex") !== input.revision) return reply({ error: "This document changed in another session. Reopen the episode before saving; your editor text is preserved." }, 409);
         await writeDocument(episode.vault_path, input.name, input.content);
-        if (input.name === "script.md") await db.update("episodes", id, { script_approved: false, status: "script" });
+        const latest=await db.get<Episode>("episodes",id);const script_meta={...latest.script_meta,document_revisions:{...(latest.script_meta.document_revisions as Record<string,string>||{}),[input.name]:documentRevision(input.content)}};
+        await db.update("episodes",id,{script_meta,...(input.name==="script.md"?{script_approved:false,status:"script"}:{})});
         return reply({ revision: createHash("sha256").update(input.content).digest("hex"), message: "Saved to the vault. Previous text is retained in .studio-history." });
       }
     }
@@ -150,7 +186,7 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
       const input = z.object({ provider: z.enum(["drive", "ninerouter", "elevenlabs"]) }).parse(await body(request));
       if (input.provider === "drive") return reply(await new DriveConnector().check());
       if (input.provider === "elevenlabs") return reply(await new ElevenLabsConnector().check());
-      return reply({ connected: true, models: await new NineRouterConnector().models(), message: "9Router connection verified." });
+      return reply({ connected: true, models: await (await routerConnector()).models(), message: "9Router connection verified." });
     }
     if (route === "oauth/start" && method === "GET") {
       const channelId = recordId.parse(request.nextUrl.searchParams.get("channel")); await db.get<Channel>("channels", channelId);
@@ -176,7 +212,7 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
       if(duplicate.some(item=>item.id!==channel.id))throw new Error("This YouTube channel is already connected to another project. Open that project instead.");
       const credentials = channel.oauth_ref ? await db.update<{ id: string }>("oauth_credentials", channel.oauth_ref, { ciphertext: encrypt(tokens) }) : await db.create<{ id: string }>("oauth_credentials", { channel: channel.id, ciphertext: encrypt(tokens) });
       await db.update("channels", channel.id, { youtube_channel_id: ownChannel.id, oauth_ref: credentials.id });
-      const done = NextResponse.redirect(new URL("/?view=connections&connected=youtube", process.env.APP_URL || request.url)); done.cookies.delete("studio_oauth"); return done;
+      const done = NextResponse.redirect(new URL("/?view=channel&channel="+pending.channel+"&tab=settings&connected=youtube", process.env.APP_URL || request.url)); done.cookies.delete("studio_oauth"); return done;
     }
     return reply({ error: "API route not found" }, 404);
   } catch (error) {
@@ -198,6 +234,7 @@ async function handleWorker(request: NextRequest, parts: string[]) {
   if (route === "claim" && request.method === "POST") { const input = z.object({ worker_id: recordId }).parse(await body(request)); return reply(await db.custom("claim", input)); }
   if (parts[0] === "jobs" && parts[1]) {
     const job = await db.get<Job & { cancel_requested: boolean }>("jobs", recordId.parse(parts[1]));
+    if(parts[2]==="validate"&&request.method==="POST"){const input=z.object({worker_id:recordId}).parse(await body(request));if(job.worker_id!==input.worker_id||job.status!=="running")throw new Error("Worker no longer owns this job");return await compositionJobCurrent(job)?reply({valid:true}):reply({error:"The queued composition source changed. This job will not execute."},409);}
     if (request.method === "GET") return reply(job);
     const input = z.object({ worker_id: recordId, progress: z.number().min(0).max(100), log: z.string().max(100_000) }).parse(await body(request));
     if (job.worker_id !== input.worker_id || job.status !== "running") throw new Error("Worker no longer owns this job");
@@ -205,8 +242,9 @@ async function handleWorker(request: NextRequest, parts: string[]) {
   }
   if (route === "complete" && request.method === "POST") {
     const input = z.object({ worker_id: recordId, job_id: recordId, error: z.string().max(20_000).optional(), asset: z.object({ drive_file_id: z.string().max(500), drive_path: z.string().max(1000), kind: z.enum(assetKinds), source: z.enum(["flow", "acestep", "render", "ffmpeg"]), meta: z.record(z.string(), z.unknown()) }).optional() }).parse(await body(request));
-    const completed = await db.custom<{ job: Job; asset?: Asset }>("complete", input);
-    if (completed.asset && ["image", "video"].includes(completed.asset.kind)) {
+    const job=await db.get<Job>("jobs",input.job_id);const obsolete=job.payload.composition_hash?!await compositionJobCurrent(job):false;
+    const completed = await db.custom<{ job: Job; asset?: Asset }>("complete", {...input,obsolete});
+    if (completed.asset && !completed.job.payload.composition_hash && ["image", "video"].includes(completed.asset.kind)) {
       const { episode } = await episodeContext(completed.job.episode); const beatIndex = Number(completed.job.payload.beat);
       if (beatIndex) { const beats = await readBeats(episode.vault_path); const beat = beats.find(item => item.index === beatIndex); if (beat) { if (completed.asset.kind === "image") beat.image = completed.asset.id; else beat.video = completed.asset.id; await writeBeats(episode.vault_path, beats); } }
     }

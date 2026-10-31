@@ -1,5 +1,26 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+test("obsolete composition completion is historical and cannot replace current production",{skip:!process.env.STUDIO_INTEGRATION_TESTS},async()=>{
+  const base=process.env.STUDIO_TEST_PB_URL!,login=await fetch(base+"/api/collections/_superusers/auth-with-password",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({identity:process.env.PB_ADMIN_EMAIL,password:process.env.PB_ADMIN_PASSWORD})}),{token}=await login.json() as any;
+  const call=async(route:string,input:any)=>{const r=await fetch(base+route,{method:"POST",headers:{"Content-Type":"application/json",Authorization:token},body:JSON.stringify(input)});const data=await r.json();assert.ok(r.ok,JSON.stringify(data));return data;};
+  const episode=await call("/api/collections/episodes/records",{channel:"arthur000000001",title:"Changed source",slug:"changed-source",status:"script",format:"short",vault_path:"Fixture/changed",script_meta:{composition_hash:"new-hash",approved_revision:"new-script",document_revisions:{"storyboard.md":"new-storyboard"}}});
+  const worker=await call("/api/collections/workers/records",{worker_key:"historical-fixture",hostname:"fixture",capabilities:["render"],heartbeat:new Date().toISOString()});
+  const job=await call("/api/collections/jobs/records",{episode:episode.id,type:"render",status:"running",worker_id:worker.id,payload:{drive_base:"Faceless/Fixture/changed",composition_hash:"old-hash",script_revision:"old-script",storyboard_revision:"old-storyboard",composition_mode:"render"}});
+  const result=await call("/api/studio/complete",{job_id:job.id,worker_id:worker.id,asset:{drive_path:"Faceless/Fixture/changed/renders/old.mp4",drive_file_id:"fixture",kind:"render",source:"render",meta:{}}});assert.equal(result.asset.selected,false);assert.equal(result.asset.meta.historical,true);
+  const current=await fetch(base+"/api/collections/episodes/records/"+episode.id,{headers:{Authorization:token}}).then(r=>r.json());assert.equal(current.status,"script");
+});
+
+test("workspace preferences are private and transactional claims survive duplicate triggers",{skip:!process.env.STUDIO_INTEGRATION_TESTS},async()=>{
+  const base=process.env.STUDIO_TEST_PB_URL!;const login=await fetch(base+"/api/collections/_superusers/auth-with-password",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({identity:process.env.PB_ADMIN_EMAIL,password:process.env.PB_ADMIN_PASSWORD})});const {token}=await login.json() as {token:string};
+  const call=async(route:string,input:unknown)=>fetch(base+"/api/studio/"+route,{method:"POST",headers:{"Content-Type":"application/json",Authorization:token},body:JSON.stringify(input)});
+  const row={key:"preferences:nativetest",kind:"preferences",channel:"arthur000000001",data:{revision:1,slots:["06:00","19:00"]},expected_revision:0};
+  const first=await call("workspace-save",row);assert.equal(first.status,200,await first.text());
+  const concurrent=await Promise.all([1,2].map(()=>call("workspace-save",{...row,data:{...row.data,revision:2},expected_revision:1})));assert.equal(concurrent.filter(r=>r.ok).length,1);
+  assert.equal((await fetch(base+"/api/collections/workspace_records/records")).status,403);
+  const data={id:"native-task",key:"production:nativetest",channel:"arthur000000001",kind:"research",status:"queued",target_at:new Date().toISOString(),created:new Date().toISOString(),attempts:0,revision:1};
+  const saved=await call("workspace-save",{key:data.key,kind:"task",channel:data.channel,data,create_only:true});assert.equal(saved.status,200,await saved.text());
+  const claims=await Promise.all([1,2].map(()=>call("workspace-task-claim",{}).then(r=>r.json())));assert.equal(claims.filter((r:any)=>r.record).length,1,JSON.stringify(claims));assert.equal((claims.find((r:any)=>r.record) as any).record.data.status,"running");
+});
 
 test("PocketBase migrations, private records, atomic worker claims and budget approvals", { skip: process.env.STUDIO_INTEGRATION_TESTS !== "1" }, async () => {
   const base = process.env.STUDIO_TEST_PB_URL!;

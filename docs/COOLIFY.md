@@ -25,6 +25,8 @@ The rclone folder can remain empty until Drive is configured; later place its pr
 
 ## 2. Register and install the GitHub App
 
+Choose the registration path based on the webhook endpoint. **The automated manifest must not contain `localhost` or a loopback webhook URL**: GitHub rejects it before creating the App. A private Tailscale address is not a public webhook receiver. If you already have a publicly reachable Coolify HTTPS endpoint, select that endpoint in the source's **Webhook Endpoint** selector before automated registration. For Tailscale-only Coolify, follow the manual path below and keep webhook delivery disabled.
+
 In Coolify, open **Sources → New source → GitHub App**. Name it, for example, `Faceless Studio`. Use automated registration for GitHub.com; leave Organization empty for the personal `Mungky` account. Preview deployments are unnecessary for this initial setup.
 
 Select **Register with GitHub** (older interfaces may say **Register Now**), create a unique App name on GitHub, and return to Coolify. Select **Install repositories** (or **Install Repositories on GitHub**). On GitHub choose **Only select repositories → Mungky/faceless-studio → Install**. Return and confirm the installation is connected.
@@ -32,6 +34,19 @@ Select **Register with GitHub** (older interfaces may say **Register Now**), cre
 If the source is already installed, use its repository-management action and add `faceless-studio` to the selected repository list instead of creating a duplicate App.
 
 For webhook settings enter the Coolify base address, not a `/webhooks` path. GitHub needs a reachable webhook endpoint for automatic deployment. If Coolify is reachable only through Tailscale, repository cloning can still work while automatic push/preview webhooks fail; use the manual **Deploy** button. This guide does not require making the dashboard public.
+
+### Manual GitHub App for Tailscale-only Coolify
+
+1. In the Coolify GitHub App source, choose **Manual installation → Continue manually**. Keep this page for entering the App credentials.
+2. Open [GitHub → Settings → Developer settings → GitHub Apps → New GitHub App](https://github.com/settings/apps/new). Use a unique name such as `mungky-faceless-coolify`. For Homepage URL you may use `https://github.com/Mungky`, the owning account's profile. User OAuth callback/setup URLs are unnecessary for this clone-only installation.
+3. Under **Webhook**, uncheck **Active**. No webhook URL is needed when webhook delivery is inactive. This is the deliberate private-server path; it does not rely on passing a fake public webhook address.
+4. Under Repository permissions set **Contents: Read-only** and **Metadata: Read-only**. Set **Email addresses: Read-only** under Account permissions for Coolify's integration. Leave pull-request write access and preview events off. Select **Only on this account**, then create the GitHub App.
+5. In its settings record **App ID** and **Client ID**, generate a **Client Secret**, and generate/download its **private key** (`.pem`). Keep the secret and private key private.
+6. Open **Install App**, install only on `Mungky/faceless-studio`, and record the numeric **Installation ID** from the installation settings URL after `/installations/`.
+7. In Coolify **Keys & Tokens → Private Keys → New private key → Add manually**, save the complete private `.pem` contents. Return to the GitHub App source and enter its App ID, Installation ID, Client ID and Client Secret; select this private key. No webhook secret is used for deliveries with webhooks inactive. If the installed Coolify version requires a nonempty Webhook Secret field, generate and retain a private random value for that field; keep GitHub's webhook **Active** unchecked.
+8. Save, use **Sync name** when available, and load the selected repository. Deploy using the application's **Deploy** button. Automatic push/preview deployment stays off until an actual reachable webhook endpoint is intentionally configured.
+
+GitHub explicitly supports turning off **Active** when an App is used for authentication without webhook events: [registering a GitHub App](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app). Coolify's [manual installation guide](https://coolify.io/docs/applications/sources/github/app) describes transferring App credentials and the private key; the disabled-webhook variant above applies those authentication steps to the private deployment.
 
 ## 3. Create the application
 

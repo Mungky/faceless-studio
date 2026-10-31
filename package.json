@@ -14,6 +14,8 @@
     "test": "tsx --test tests/*.test.ts",
     "test:integration": "node scripts/test-integration.mjs",
     "test:render": "tsx scripts/test-render.mts",
+    "test:workspace": "tsx scripts/test-workspace-browser.mts",
+    "test:code-render": "tsx scripts/test-code-render.mts",
     "test:operations": "node --test scripts/test-operations.mjs scripts/test-backup-native.mjs scripts/test-retention.mjs",
     "setup:local": "node scripts/setup-local.mjs",
     "dev:db": "node --env-file-if-exists=.env scripts/pocketbase.mjs",

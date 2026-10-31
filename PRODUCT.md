@@ -4,40 +4,71 @@
 
 ## Platform
 
-web
+Web app with a private server and Windows rendering worker.
 
 ## Stack
 
-Confirmed in PLAN.md: TypeScript, Node >=22, Next.js, PocketBase, Docker Compose, n8n, 9Router. HyperFrames and ACE-Step execute on a Windows worker. Large files live in Google Drive through rclone. Markdown lives in the existing Obsidian vault.
+Next.js, React, TypeScript, PocketBase, 9Router, SearXNG, an explicitly configured Obscura
+MCP bridge, Google YouTube APIs, and HyperFrames. The existing Drive/rclone and media
+connectors remain available. Credentials remain private and are never sent to the UI.
 
 ## Users
 
-One owner producing faceless YouTube videos for Arthur, Not Yet, and Exhibit Pop, working from a Windows laptop with a private home server.
+One owner operating multiple faceless channels and niches. Current source folders include
+Arthur, Not Yet and Briking Nius. Existing database channels, including Exhibit Pop, must
+not be deleted or reassigned automatically. More channels and platforms are future scope.
 
 ## Product Purpose
 
-Open the app as channel projects: Arthur, Not Yet, and Exhibit Pop, with an Add channel card for future projects. Each project contains Channel analytics and Video analytics, including full reports for uploads that have no production record. Channel reports lead with YouTube identity, audience reports and an upload calendar; Video Details opens the selected video's full analytics. Studio organizes production from research through script, storyboard, voice, music, footage, rendering and an upload pack. Its Dify-style workflow canvas connects reusable channel templates, persistent production chat, exact-output reviews and real job states. Existing editors remain in Production tools. Use per-video analytics and script-grounded diagnoses to decide what to improve next.
+Improve the formula for subsequent episodes from the owner's historical performance
+and available public competitor evidence. Channel cards lead to analytics, upload
+calendars, individual video reports, production, agent reports and channel settings.
+Studio is a card-based template library with explicit editing and an episode composer.
+FYP gathers competitor, similar-channel and niche references. There is no global Home
+or Settings destination. These approved 31 October requirements supersede the old Dify
+canvas and violet shell direction.
 
 ## Operating Context
 
-The home server is a ThinkCentre, Intel i7 generation 7, 16 GB RAM, currently Zorin with Docker and Tailscale. A later move to headless Ubuntu Server must remain possible. The worker pulls jobs; an offline laptop leaves them queued. The vault root is D:/Faceless Creation/projects, synchronized using Obsidian Git (confirmed by owner, superseding Syncthing in the original diagram).
+The server prepares research, topic directions, scripts, analytics and evaluation.
+The Windows PC pulls heavy storyboard-frame, animation, audio/media and render jobs.
+An offline worker leaves jobs queued. Existing Markdown and finished videos under
+D:/Faceless Creation/projects remain preserved. Deployment to another machine is separate
+from local implementation and requires its real connections and storage to be configured.
 
 ## Capabilities and Constraints
 
-All UI copy is English. Preserve the existing playbooks and render projects. No automatic publishing. Every paid operation requires an explicit estimate and approval, enforced on the server. Credentials remain in environment files. Google Flow through the Flow Connector is the preferred generation provider, with replaceable connectors and configurable spending limits. Flow's browser must remain signed in and visible on the worker; it cannot run on the headless server. Deployment is private over Tailscale and is deferred by the owner. All three YouTube channels are connected with read-only OAuth; missing provider connections must never be fabricated.
+Each channel has a default template, configurable daily target slots, lead time and a
+bounded research backlog. An individual episode may use another template without changing
+the channel default. Every episode freezes its template version, instructions and playbook
+content. Owners may enter ideas or exact manual scripts. Editing templates affects future
+episodes. Revisions preserve original text and require exact-output review.
+
+Automatic evaluation separates measured observations from hypotheses and recommendations.
+Template proposals remain pending until explicit approval. Missing metrics never become
+zero; private competitor retention is unavailable; views do not prove algorithm changes.
+All uploads can have reports without creating fake production episodes. Publication remains
+manual. Paid requests require explicit estimates and approval, and ambiguous requests are
+not automatically replayed. Research automation requires a confirmed free model route.
 
 ## Evidence on Hand
 
-PLAN.md; projects/Arthur/Arthur.md; projects/Not Yet/Not Yet.md; projects/Exhibit Pop/Exhibit Pop.md; existing HyperFrames compositions; local ACE-Step installation; connected YouTube channels and per-video snapshots. Approved changes are recorded in docs/superpowers/specs/2026-10-28-channel-projects.md and docs/superpowers/specs/2026-10-28-studio-revision.md. The owner subsequently selected Dify’s canvas and production conversation model in docs/superpowers/specs/2026-10-28-workflow-canvas.md, superseding the OpenMontage production-board entry; the app retains its existing production engine. Empty metrics must remain empty, never presented as real channel performance.
+The approved conversation, reference screenshot, interactive channel/studio prototype,
+docs/superpowers/plans/2026-10-31-channel-studio-production.md, existing source playbooks,
+and current app tests. See docs/CHANNEL-STUDIO.md for operation and external-service limits.
 
 ## Brand Commitments
 
-The owner explicitly selected Dify's workflow canvas for Studio on 28 October 2026, superseding the former production-card/board entry. Studio centers on a node canvas, right configuration panel and production chat, with Arthur/Not Yet/new templates. The incumbent Linear-like graphite shell, compact sidebar and channel analytics remain outside this surface change. Preserve quiet dark surfaces, legible controls and explicit state markers. The application is English. User-pinned references supersede earlier direction cards and random assignments.
+Dark monochrome minimalism, native system typography, restrained borders and clear states.
+The owner's references are Linear, Notion, Vercel and the supplied card-based studio image.
+Use original channel and video artwork when available; display honest empty states otherwise.
+New primary flows use concise Indonesian with familiar analytics/production terminology.
 
 ## Product Principles
 
-- Existing playbooks are configuration and remain authoritative.
-- Text, status and large files have separate, explicit sources of truth.
-- A worker being offline is a normal state, not a lost job.
-- Approve spending before the provider is called; never retry an ambiguous paid request automatically.
-- Make missing connections and unavailable metrics clear and actionable.
+- Evidence informs proposals; measured facts and hypotheses stay distinguishable.
+- The owner can write manually and keep the exact original.
+- An episode's formula remains reproducible after template edits.
+- Unknown metrics and unavailable connections remain visible.
+- Work survives offline workers, overlapping triggers and restarts without paid replay.
+- Preserve source projects, credentials and existing channel identities.

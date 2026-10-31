@@ -5,7 +5,7 @@ export { z };
 export const episodeStatuses = ["idea", "script", "storyboard", "audio", "footage", "render", "review", "published"] as const;
 export const jobTypes = ["render", "music", "ffmpeg", "vo", "image", "video"] as const;
 export const assetKinds = ["image", "video", "vo", "sfx", "bgm", "music", "render", "thumb"] as const;
-export const operations = ["research", "script", "hook", "diagnosis", "storyboard", "upload_pack", "vo", "image", "video"] as const;
+export const operations = ["research", "script", "hook", "diagnosis", "storyboard", "composition", "upload_pack", "vo", "image", "video"] as const;
 export const recordId = z.string().regex(/^[a-zA-Z0-9]{15}$/, "Invalid record ID");
 export const videoId = z.string().regex(/^[a-zA-Z0-9_-]{11}$/, "Enter a valid YouTube video ID");
 export const segment = z.string().min(1).max(120).refine(v => !/[\\/:\x00-\x1f]/.test(v) && v !== "." && v !== ".." && !/[. ]$/.test(v), "Invalid path segment");
@@ -23,7 +23,7 @@ export const updateEpisodeSchema = z.object({ title: z.string().trim().min(1).ma
 export const quoteRequestSchema = z.object({ operation: z.enum(operations), episode: recordId, provider: z.enum(["ninerouter", "elevenlabs", "flow", "webhook"]).optional(), input: z.string().max(100_000).default(""), beat: z.number().int().min(1).max(500).optional(), model: z.string().max(150).optional(), seconds: z.number().min(1).max(600).optional() });
 export type QuoteRequest = z.infer<typeof quoteRequestSchema>;
 export const localJobSchema = z.object({ episode: recordId, type: z.enum(["render", "music", "ffmpeg"]), prompt: z.string().max(10_000).default(""), lyrics: z.string().max(10_000).default(""), seconds: z.number().min(1).max(600).default(30), seed: z.number().int().min(0).max(2_147_483_647).default(42) });
-export const modelRouteSchema = z.object({ task: z.enum(["research", "script", "hook", "diagnosis", "storyboard", "upload_pack"]), model: z.string().trim().min(1).max(150), billing: z.enum(["free", "paid"]), usd_per_1k_chars: z.number().min(0).max(1000), max_output_tokens: z.number().int().min(256).max(32000).default(4000) }).refine(r => r.billing !== "paid" || r.usd_per_1k_chars > 0, "Paid routes require a positive price estimate");
+export const modelRouteSchema = z.object({ task: z.enum(["research", "script", "hook", "diagnosis", "storyboard", "composition", "upload_pack"]), model: z.string().trim().min(1).max(150), billing: z.enum(["free", "paid"]), usd_per_1k_chars: z.number().min(0).max(1000), max_output_tokens: z.number().int().min(256).max(32000).default(4000) }).refine(r => r.billing !== "paid" || r.usd_per_1k_chars > 0, "Paid routes require a positive price estimate");
 export interface Channel { id: string; name: string; handle: string; playbook_path: string; color: string; youtube_channel_id: string; oauth_ref: string; profile?: ChannelProfile; }
 export interface Episode { id: string; channel: string; title: string; slug: string; status: typeof episodeStatuses[number]; format: "short" | "long"; vault_path: string; drive_folder_id: string; youtube_video_id: string; script_approved: boolean; script_meta: Record<string, unknown>; published_at?: string; created: string; updated: string; }
 export interface Asset { id: string; episode: string; kind: typeof assetKinds[number]; drive_file_id: string; drive_path: string; source: string; selected: boolean; meta: Record<string, unknown>; created: string; }
@@ -150,3 +150,7 @@ export interface RenderEngine { readonly name: string; render(input: RenderInput
 export * from "./channel-analytics";
 export * from "./production-timeline";
 export * from "./workflow";
+export * from "./workspace";
+export * from "./evaluation";
+export * from "./scheduler";
+export * from "./composition";
