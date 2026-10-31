@@ -56,17 +56,9 @@ services:
       PORT: "3000"
       TZ: Asia/Jakarta
     volumes:
-      - type: bind
-        source: ${SERVER_VAULT_ROOT:?Set an existing absolute server vault path}
-        target: /vault
-        bind:
-          create_host_path: false
+      - ${SERVER_VAULT_ROOT}:/vault
       - web_cache:/cache
-      - type: bind
-        source: ${SERVER_RCLONE_ROOT:-/srv/faceless-studio/rclone}
-        target: /rclone
-        bind:
-          create_host_path: false
+      - ${SERVER_RCLONE_ROOT}:/rclone
     ports:
       - "${STUDIO_BIND_IP:-127.0.0.1}:${STUDIO_HTTP_PORT:-3100}:3000"
     depends_on:
