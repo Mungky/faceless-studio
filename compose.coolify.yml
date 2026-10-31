@@ -13,6 +13,9 @@ services:
       PB_ADMIN_PASSWORD: ${PB_ADMIN_PASSWORD:?Set PB_ADMIN_PASSWORD}
       STUDIO_OWNER_EMAIL: ${STUDIO_OWNER_EMAIL:-owner@studio.local}
       STUDIO_OWNER_PASSWORD: ${STUDIO_OWNER_PASSWORD:?Set STUDIO_OWNER_PASSWORD}
+      # The PocketBase cron hook posts /api/automation/tick to the web service; without these it exits silently.
+      AUTOMATION_TOKEN: ${AUTOMATION_TOKEN:?Set AUTOMATION_TOKEN}
+      STUDIO_WEB_INTERNAL_URL: http://web:3000
       TZ: Asia/Jakarta
     volumes:
       - pb_data:/pb_data
