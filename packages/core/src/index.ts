@@ -26,7 +26,7 @@ export const localJobSchema = z.object({ episode: recordId, type: z.enum(["rende
 export const modelRouteSchema = z.object({ task: z.enum(["research", "script", "hook", "diagnosis", "storyboard", "composition", "upload_pack"]), model: z.string().trim().min(1).max(150), billing: z.enum(["free", "paid"]), usd_per_1k_chars: z.number().min(0).max(1000), max_output_tokens: z.number().int().min(256).max(32000).default(4000) }).refine(r => r.billing !== "paid" || r.usd_per_1k_chars > 0, "Paid routes require a positive price estimate");
 export interface Channel { id: string; name: string; handle: string; playbook_path: string; color: string; youtube_channel_id: string; oauth_ref: string; profile?: ChannelProfile; }
 export interface Episode { id: string; channel: string; title: string; slug: string; status: typeof episodeStatuses[number]; format: "short" | "long"; vault_path: string; drive_folder_id: string; youtube_video_id: string; script_approved: boolean; script_meta: Record<string, unknown>; published_at?: string; created: string; updated: string; }
-export interface Asset { id: string; episode: string; kind: typeof assetKinds[number]; drive_file_id: string; drive_path: string; source: string; selected: boolean; meta: Record<string, unknown>; created: string; }
+export interface Asset { id: string; episode: string; kind: typeof assetKinds[number]; drive_file_id: string; drive_path: string; source: string; selected: boolean; asset_group?: string; tags?: string[] | null; meta: Record<string, unknown>; created: string; }
 export interface Job { id: string; type: typeof jobTypes[number]; episode: string; payload: Record<string, unknown>; status: "queued" | "running" | "done" | "failed" | "cancelled"; worker_id: string; progress: number; log: string; result_asset: string; attempts: number; started: string; finished: string; created: string; updated: string; }
 export interface Worker { id: string; worker_key: string; hostname: string; capabilities: string[]; gpu: string; heartbeat: string; }
 export interface RetentionPoint { elapsed_ratio: number; retention: number; }
@@ -154,3 +154,4 @@ export * from "./workspace";
 export * from "./evaluation";
 export * from "./scheduler";
 export * from "./composition";
+export * from "./assets";

@@ -58,3 +58,51 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 .route-price{display:grid;gap:3px;font-size:10px;color:#8b8b96;margin:0}
 .route-actions{display:flex;align-items:center;gap:8px;justify-content:flex-end}
 @media(max-width:900px){.route-row{grid-template-columns:1fr 1fr}.route-task,.route-row>input[list]{grid-column:1/-1}.route-actions{grid-column:1/-1}}
+
+/* Asset library */
+.alib-page .page-heading{display:flex;justify-content:space-between;align-items:flex-end;gap:16px}
+.alib-toolbar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.alib-toolbar select{max-width:190px;min-height:36px;padding-top:0;padding-bottom:0}
+.alib-search{flex:1 1 240px;display:flex;align-items:center;gap:8px;background:#101012;border:1px solid #333338;border-radius:6px;padding:0 11px;color:var(--quiet);min-height:36px}
+.workspace-main .alib-search input{flex:1;border:0;background:transparent;padding:7px 0;min-width:0;border-radius:0}
+.workspace-main .alib-search input:focus-visible{outline:none}
+.alib-search:focus-within{outline:2px solid #c9c9d0;outline-offset:2px}
+.alib-grouping{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:20px}
+.alib-page .chip{height:auto;padding:3px 10px;font-size:11px;gap:5px}
+.alib-grouping .chip{padding:5px 12px;font-size:12px}
+.alib-grouping .chip[aria-pressed="true"]{background:var(--primary);color:#101012}
+.alib-bulk{position:sticky;top:8px;z-index:3;display:flex;flex-wrap:wrap;align-items:center;gap:12px;background:var(--raised);border:1px solid var(--line);border-radius:var(--radius);padding:10px 14px;margin-bottom:20px}
+.alib-bulk form{display:flex;gap:6px}
+.alib-bulk input{width:170px}
+.alib-section{margin-bottom:30px}
+.alib-section>header{display:flex;align-items:baseline;gap:10px;margin-bottom:10px;border-bottom:1px solid var(--line-soft);padding-bottom:8px}
+.alib-section h2{font-size:14px;font-weight:500;margin:0}
+.alib-section .link-button{margin-left:auto;background:none;border:0;color:var(--muted);font-size:12px;padding:0;text-decoration:underline}
+.alib-section .link-button:hover{color:var(--text)}
+.alib-grid{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+.alib-card{position:relative;background:var(--surface);border:1px solid var(--line-soft);border-radius:var(--radius)}
+.alib-card:hover{border-color:var(--line)}
+.alib-card.picked{border-color:#c9c9d0;background:var(--accent-bg)}
+.alib-check{position:absolute;top:8px;right:8px;display:flex;padding:4px;cursor:pointer}
+.alib-check input{width:15px;height:15px;margin:0;padding:0}
+.alib-open{display:flex;flex-direction:column;align-items:flex-start;gap:7px;width:100%;text-align:left;background:none;border:0;color:inherit;padding:12px 34px 12px 12px}
+.alib-kind{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+.alib-open strong{font-weight:500;font-size:13px;overflow-wrap:anywhere}
+.alib-owner{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px}
+.alib-owner i{width:8px;height:8px;border-radius:50%;flex:none}
+.alib-owner em{font-style:normal;color:var(--quiet)}
+.alib-tags{display:flex;flex-wrap:wrap;gap:5px}
+.alib-group{background:var(--primary);color:#101012}
+.alib-detail{display:grid;gap:16px}
+.alib-preview{background:#0e0e10;border:1px solid var(--line-soft);border-radius:var(--radius);min-height:160px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.alib-preview img,.alib-preview video{max-width:100%;max-height:52vh;display:block}
+.alib-preview audio{width:92%}
+.alib-preview-empty{display:grid;justify-items:center;gap:10px;padding:26px;text-align:center}
+.alib-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0}
+.alib-meta dt{color:var(--quiet);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+.alib-meta dd{margin:2px 0 0;overflow-wrap:anywhere}
+.alib-path{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:var(--muted)}
+.alib-tag-edit{display:grid;gap:8px}
+.alib-tag-add{display:flex;gap:6px}
+.alib-tag-add input{flex:1}
+@media (max-width:720px){.alib-page .page-heading{display:block}.alib-toolbar select{max-width:none;flex:1 1 140px}.alib-bulk input{width:130px}}

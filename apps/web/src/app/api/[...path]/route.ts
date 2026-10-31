@@ -16,6 +16,7 @@ import { createChannel } from "../../../server/channels";
 import {workflowLibrary,workflowTemplate,createWorkflowTemplate,saveWorkflowTemplate,createWorkflowRun,workflowRunData,messageWorkflowRun,actWorkflowRun} from "../../../server/workflows";
 import {workspaceData,channelPreferences,saveChannelPreferences,createProduction,discoveryData,addCompetitor,discover,saveReference,inspectReference,generateVideoReport,proposeTemplate,decideProposal,recoverTask} from "../../../server/workspace";
 import {automationTick} from "../../../server/scheduler";
+import {organizeAssets,updateAsset} from "../../../server/assets";
 import {compositionData,saveComposition,queueComposition,reviewComposition,compositionJobCurrent} from "../../../server/compositions";
 
 export const runtime = "nodejs";
@@ -155,9 +156,10 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
     if (parts[0] === "jobs" && parts[2] === "cancel" && method === "POST") {
       return reply(await db.custom("cancel", { job_id: recordId.parse(parts[1]) }));
     }
-    if (parts[0] === "assets" && parts[1] && parts[1] !== "upload") {
+    if (route === "assets/organize" && method === "POST") return reply({ assets: await organizeAssets(await body(request)) });
+    if (parts[0] === "assets" && parts[1] && parts[1] !== "upload" && parts[1] !== "organize") {
       const id = recordId.parse(parts[1]);
-      if (method === "PATCH") return reply(await db.update("assets", id, z.object({ selected: z.boolean() }).parse(await body(request))));
+      if (method === "PATCH") return reply(await updateAsset(id, await body(request)));
       if (method === "GET" && parts[2] === "preview") return previewAsset(request, await db.get<Asset>("assets", id));
     }
     if (route === "assets/upload" && method === "POST") {
