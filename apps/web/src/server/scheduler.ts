@@ -27,7 +27,7 @@ export async function automationTick(){
         const route=(await db.list<ModelRoute>("model_routes","task=\"research\""))[0];if(!route||route.billing!=="free")throw new Error("Riset otomatis memerlukan rute research gratis yang sudah dikonfirmasi. Rute berbayar tetap melalui persetujuan.");
         const refs=await discover(task.channel,{mode:"niche",query:prefs.niche});
         const direction=boundedResearchDirection(task.target_at,refs);
-        const created=await createProduction({channel:task.channel,title:"Riset · "+new Intl.DateTimeFormat("id-ID",{dateStyle:"medium",timeStyle:"short",timeZone:prefs.timezone}).format(new Date(task.target_at)),entry_mode:"research",content:prefs.niche||"Temukan ide berikutnya berdasarkan sejarah channel dan referensi.",request_key:row.key},owner.id);
+        const created=await createProduction({channel:task.channel,entry_mode:"research",at:task.target_at,request_key:row.key},owner.id);
         task.run_id=created.run.id;task.revision++;await saveWorkspace(row.key,row.kind,task.channel,task,row.data.revision-1);
         if(created.run.graph.nodes.some(n=>created.run.states[n.id]?.quote||created.run.states[n.id]?.status==="waiting_review"||created.run.states[n.id]?.status==="running"))throw new Error("Episode hasil pemulihan memerlukan pemeriksaan. Provider tidak dipanggil ulang.");
         const directed=await messageWorkflowRun(created.run.id,{expected_revision:created.run.revision,content:direction},owner.id);
