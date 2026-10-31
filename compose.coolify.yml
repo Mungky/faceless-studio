@@ -56,9 +56,9 @@ services:
       PORT: "3000"
       TZ: Asia/Jakarta
     volumes:
-      - ${SERVER_VAULT_ROOT}:/vault
+      - /srv/faceless-studio/vault:/vault
       - web_cache:/cache
-      - ${SERVER_RCLONE_ROOT}:/rclone
+      - /srv/faceless-studio/rclone:/rclone
     expose:
       - "3000"
     depends_on:
