@@ -19,6 +19,7 @@ ENV NODE_ENV=production HOSTNAME=0.0.0.0 PORT=3000 NEXT_TELEMETRY_DISABLED=1
 COPY --from=build --chown=node:node /app/apps/web/.next/standalone ./
 COPY --from=build --chown=node:node /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=build --chown=node:node /app/apps/web/public ./apps/web/public
+COPY --from=build --chown=node:node /app/scripts/n8n-proxy.mjs /app/scripts/n8n-theme.css ./scripts/
 RUN mkdir /cache && chown node:node /cache
 USER node
 EXPOSE 3000

@@ -43,6 +43,9 @@ services:
       RCLONE_BIN: /usr/bin/rclone
       RCLONE_CONFIG: /rclone/rclone.conf
       RCLONE_REMOTE: ${RCLONE_REMOTE:-}
+      N8N_URL: ${N8N_URL:-}
+      N8N_API_KEY: ${N8N_API_KEY:-}
+      N8N_EDITOR_URL: ${N8N_EDITOR_URL:-}
       NINEROUTER_URL: ${NINEROUTER_URL:-}
       NINEROUTER_API_KEY: ${NINEROUTER_API_KEY:-}
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
@@ -73,6 +76,20 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+  # Shows the n8n editor inside Studio's Workflow tab (same image as web, different command).
+  n8n-proxy:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    command: ["node", "scripts/n8n-proxy.mjs"]
+    environment:
+      N8N_URL: ${N8N_URL:?Set N8N_URL (http://...)}
+      N8N_PROXY_HOST: 0.0.0.0
+      N8N_PROXY_PORT: "5679"
+    # Reachable only from this server; `tailscale serve --https=5679` publishes it over https to the tailnet.
+    ports:
+      - "127.0.0.1:5679:5679"
 volumes:
   pb_data:
   web_cache:

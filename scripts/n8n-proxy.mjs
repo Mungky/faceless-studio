@@ -30,7 +30,9 @@ function rewriteHeaders(headers,origin){
 
 const server=http.createServer((req,res)=>{
   if(req.url==="/__studio/theme.css"){res.writeHead(200,{"content-type":"text/css; charset=utf-8","cache-control":"no-store"});res.end(theme());return;}
-  const origin="http://"+(req.headers.host||"127.0.0.1:"+port);
+  // Behind an https domain (Coolify, Tailscale) the browser must be sent https/wss URLs, or it blocks them.
+  const secure=String(req.headers["x-forwarded-proto"]||"").split(",")[0].trim()==="https";
+  const origin=(secure?"https://":"http://")+(req.headers.host||"127.0.0.1:"+port);
   // Keep the browser's compression: the editor's bundles and /types/nodes.json are several MB.
   const headers={...req.headers,host:targetUrl.host};
   if(headers.origin)headers.origin=targetUrl.origin;
@@ -47,8 +49,8 @@ const server=http.createServer((req,res)=>{
     const unpack={gzip:zlib.createGunzip,br:zlib.createBrotliDecompress,deflate:zlib.createInflate}[encoding];
     const source=unpack?up.pipe(unpack()):up;delete outHeaders["content-encoding"];
     const chunks=[];source.on("error",()=>res.destroy());source.on("data",c=>chunks.push(c));source.on("end",()=>{
-      const local=origin.replace(/^http:\/\//,"");
-      let body=Buffer.concat(chunks).toString("utf8").split(targetUrl.origin).join(origin).split("ws://"+targetUrl.host).join("ws://"+local);
+      const local=origin.replace(/^https?:\/\//,"");
+      let body=Buffer.concat(chunks).toString("utf8").split(targetUrl.origin).join(origin).split("ws://"+targetUrl.host).join((secure?"wss://":"ws://")+local);
       if(html)body=body.replace(/<head>/i,"<head>"+boot);
       delete outHeaders["content-length"];res.writeHead(up.statusCode||200,outHeaders);res.end(body);
     });
@@ -72,4 +74,5 @@ server.on("upgrade",(req,socket,head)=>{
 
 server.on("clientError",(_error,socket)=>socket.destroy());
 process.on("uncaughtException",error=>console.error("proxy error (kept running):",error.message));
-server.listen(port,"127.0.0.1",()=>console.log(`n8n editor for Studio: http://127.0.0.1:${port} -> ${targetUrl.origin}`));
+const bind=process.env.N8N_PROXY_HOST||env.N8N_PROXY_HOST||"127.0.0.1"; // set 0.0.0.0 on a server so browsers can reach it
+server.listen(port,bind,()=>console.log(`n8n editor for Studio: http://${bind}:${port} -> ${targetUrl.origin}`));

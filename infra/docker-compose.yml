@@ -66,6 +66,21 @@ services:
       - n8n_data:/home/node/.n8n
     ports:
       - "${TAILSCALE_IP:-127.0.0.1}:5678:5678"
+  # Shows the n8n editor inside Studio's Workflow tab (same image as web, different command).
+  n8n-proxy:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    command: ["node", "scripts/n8n-proxy.mjs"]
+    environment:
+      N8N_URL: http://n8n:5678
+      N8N_PROXY_HOST: 0.0.0.0
+      N8N_PROXY_PORT: "5679"
+    depends_on:
+      - n8n
+    ports:
+      - "${TAILSCALE_IP:-127.0.0.1}:5679:5679"
   ninerouter:
     image: decolua/9router:${NINEROUTER_VERSION:-0.5.111}
     restart: unless-stopped
