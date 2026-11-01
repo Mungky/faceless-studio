@@ -17,7 +17,7 @@ export class SearchConnector {
     if(!this.endpoint)throw new Error("Hubungkan SearXNG di server terlebih dahulu.");
     const url=new URL("search",this.endpoint.replace(/\/search\/?$/,"").replace(/\/?$/,"/"));url.search=new URLSearchParams({q:query.slice(0,1000),format:"json",safesearch:"0"}).toString();
     const response=await fetch(url,{signal:AbortSignal.timeout(25_000),redirect:"error",...(this.token?{headers:{Authorization:"Bearer "+this.token}}:{})});const payload=JSON.parse(await bounded(response)) as {results?:Record<string,unknown>[]};
-    return (payload.results||[]).slice(0,30).flatMap(item=>{try{const source=publicSourceUrl(String(item.url));return [{title:String(item.title||source.hostname).slice(0,300),url:source.href,summary:String(item.content||"").slice(0,4000),thumbnail:"",source:"SearXNG · "+source.hostname,views:null}];}catch{return [];}});
+    return (payload.results||[]).slice(0,30).flatMap(item=>{try{const source=publicSourceUrl(String(item.url));return [{title:String(item.title||source.hostname).slice(0,300),url:source.href,summary:String(item.content||"").slice(0,4000),thumbnail:String(item.thumbnail||item.img_src||"").slice(0,2000),source:"SearXNG · "+source.hostname,views:null}];}catch{return [];}});
   }
 }
 // The browser bridge is an explicitly configured Streamable HTTP MCP server.

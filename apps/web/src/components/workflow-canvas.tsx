@@ -7,9 +7,9 @@ import {
   type Connection, type Edge, type EdgeChange, type Node, type NodeChange, type NodeProps,
 } from "@xyflow/react";
 import {
-  ArrowRight, CheckCheck, Circle, CircleAlert, ClipboardList, Film, Hand, Image,
-  Keyboard, LayoutPanelTop, LockKeyhole, Maximize, Mic, MousePointer2, Pause,
-  Plus, Search, ShieldCheck, Sparkles, Trash2, Upload, X, ZoomIn, ZoomOut,
+  ArrowRight, BookMarked, CheckCheck, Circle, CircleAlert, ClipboardList, Film, Hand, Image,
+  Keyboard, LayoutPanelTop, LoaderCircle, LockKeyhole, Maximize, Mic, MousePointer2, Pause,
+  Plus, Search, ShieldCheck, Sparkles, Trash2, Upload, Wand2, X, ZoomIn, ZoomOut,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -21,46 +21,57 @@ import "@xyflow/react/dist/style.css";
 import "./workflow-canvas.css";
 
 export interface WorkflowCanvasProps {
+  onOpen?: (id: string) => void;
   graph: WorkflowGraph;
   onChange: (graph: WorkflowGraph) => void;
   selected: string;
   onSelect: (id: string) => void;
   states?: Record<string, WorkflowNodeState>;
   readOnly?: boolean;
+  // Cards whose service or model is not set up yet, with the reason shown on the card.
+  warnings?: Record<string, string>;
 }
 
 type CanvasNode = Node<{
   node: WorkflowNode;
   state?: WorkflowNodeState;
   readOnly: boolean;
+  warning?: string;
 }, "workflow">;
 
 const kindIcons: Record<WorkflowNodeKind, LucideIcon> = {
   brief: ClipboardList, research: Search, script: Sparkles, storyboard: LayoutPanelTop,
   voiceover: Mic, media: Image, render: Film, review: ShieldCheck, upload_pack: Upload,
+  custom: Wand2, reference: BookMarked,
 };
+const referenceLabels: Record<string, string> = { link: "Link", video: "Video", image: "Gambar", markdown: "Markdown", file: "File" };
+// Stages that may appear more than once: they write nothing canonical (or nothing at all).
+const repeatable = (kind: WorkflowNodeKind) => kind === "review" || kind === "custom" || kind === "reference";
 const statusLabels: Record<WorkflowNodeStatus, string> = {
-  idle: "Not started", ready: "Ready", running: "Running", waiting_approval: "Approval needed",
-  waiting_review: "Review needed", completed: "Completed", failed: "Failed", blocked: "Blocked",
+  idle: "Belum mulai", ready: "Siap", running: "Berjalan", waiting_approval: "Setujui biaya",
+  waiting_review: "Perlu review", completed: "Selesai", failed: "Gagal", blocked: "Terhenti",
 };
 
 const WorkflowCard = memo(function WorkflowCard({ data, selected, isConnectable }: NodeProps<CanvasNode>) {
-  const { node, state, readOnly } = data;
+  const { node, state, readOnly, warning } = data;
   const Icon = kindIcons[node.kind];
-  const StatusIcon = state?.status === "completed" ? CheckCheck
+  const attention = state?.status === "waiting_review" || state?.status === "waiting_approval";
+  const StatusIcon = state?.status === "running" ? LoaderCircle : state?.status === "completed" ? CheckCheck
     : state?.status === "failed" || state?.status === "blocked" ? CircleAlert
     : state?.status === "waiting_review" || state?.status === "waiting_approval" ? Pause : Circle;
   return <div className={`workflow-node workflow-kind-${node.kind}${selected ? " is-selected" : ""}${state ? ` workflow-state-${state.status}` : ""}`}>
-    {node.kind !== "brief" && <Handle type="target" position={Position.Left} isConnectable={isConnectable && !readOnly} aria-label={`Input for ${node.title}`} />}
+    {readOnly && attention && <span className="workflow-attention" aria-hidden="true">!</span>}
+    {node.kind !== "brief" && node.kind !== "reference" && <Handle type="target" position={Position.Left} isConnectable={isConnectable && !readOnly} aria-label={`Input for ${node.title}`} />}
     <div className="workflow-node-heading">
       <span className="workflow-node-icon"><Icon size={16} /></span>
       <div><strong title={node.title}>{node.title}</strong><span>{workflowNodeInfo[node.kind].label}</span></div>
       {node.kind === "brief" && <LockKeyhole className="workflow-root-lock" size={12} aria-label="Required starting node" />}
     </div>
-    <p className="workflow-node-preview">{node.instructions.trim() || workflowNodeInfo[node.kind].description}</p>
+    {warning && state?.status !== "completed" && <span className="workflow-node-warning" title={warning}><CircleAlert size={11} />Belum siap</span>}
+    <p className="workflow-node-preview">{node.kind === "reference" ? `${referenceLabels[node.reference?.type || "link"]} · ${node.reference?.name || node.reference?.url || "Belum diisi"}` : node.instructions.trim() || workflowNodeInfo[node.kind].description}</p>
     <div className="workflow-node-footer">
-      {readOnly ? <span className={`workflow-node-status workflow-status-${state?.status || "idle"}`}><StatusIcon size={11} />{statusLabels[state?.status || "idle"]}</span>
-        : <span>{node.review || node.kind === "review" ? <><ShieldCheck size={11} />Human review</> : <><ArrowRight size={11} />{node.kind === "brief" ? "Workflow input" : "Connected stage"}</>}</span>}
+      {readOnly ? <span className={`workflow-node-status workflow-status-${state?.status || "idle"}`}><StatusIcon size={11} className={state?.status === "running" ? "spin" : undefined} />{statusLabels[state?.status || "idle"]}</span>
+        : <span>{node.kind === "reference" ? <><BookMarked size={11} />Input referensi</> : node.review || node.kind === "review" ? <><ShieldCheck size={11} />Human review</> : <><ArrowRight size={11} />{node.kind === "brief" ? "Workflow input" : "Connected stage"}</>}</span>}
       {readOnly && (node.review || node.kind === "review") && <ShieldCheck size={11} aria-label="Human review required" />}
     </div>
     <Handle type="source" position={Position.Right} isConnectable={isConnectable && !readOnly} aria-label={`Output from ${node.title}`} />
@@ -68,10 +79,10 @@ const WorkflowCard = memo(function WorkflowCard({ data, selected, isConnectable 
 });
 const nodeTypes = { workflow: WorkflowCard };
 
-function toCanvasNode(node: WorkflowNode, selected: string, states: WorkflowCanvasProps["states"], readOnly: boolean): CanvasNode {
+function toCanvasNode(node: WorkflowNode, selected: string, states: WorkflowCanvasProps["states"], readOnly: boolean, warning?: string): CanvasNode {
   return {
     id: node.id, type: "workflow", position: { ...node.position },
-    data: { node, state: states?.[node.id], readOnly }, selected: selected === node.id,
+    data: { node, state: states?.[node.id], readOnly, warning }, selected: selected === node.id,
     sourcePosition: Position.Right, targetPosition: Position.Left,
     deletable: !readOnly && node.kind !== "brief",
     ariaLabel: `${node.title}, ${workflowNodeInfo[node.kind].label}${readOnly ? `, ${statusLabels[states?.[node.id]?.status || "idle"]}` : ""}`,
@@ -80,10 +91,12 @@ function toCanvasNode(node: WorkflowNode, selected: string, states: WorkflowCanv
 
 function toCanvasEdge(edge: WorkflowGraph["edges"][number], states: WorkflowCanvasProps["states"], readOnly: boolean): Edge {
   const complete = states?.[edge.source]?.status === "completed";
+  // The connection into a running stage animates so live work is visible from afar.
+  const live = readOnly && states?.[edge.target]?.status === "running";
   return {
-    ...edge, type: "smoothstep", pathOptions: { borderRadius: 14, offset: 24 },
+    ...edge, animated: live, type: "smoothstep", pathOptions: { borderRadius: 14, offset: 24 },
     className: complete ? "workflow-edge-complete" : "", deletable: !readOnly,
-    markerEnd: { type: MarkerType.ArrowClosed, width: 15, height: 15, color: complete ? "#6d9a81" : "#626677" },
+    markerEnd: { type: MarkerType.ArrowClosed, width: 15, height: 15, color: complete ? "#6d9a81" : "#6a6a6a" },
     ariaLabel: `Connection from ${edge.source} to ${edge.target}`,
   } as Edge;
 }
@@ -94,6 +107,7 @@ function connectionError(graph: WorkflowGraph, connection: Connection | Edge): s
   if (source === target) return "A node cannot connect to itself.";
   if (!graph.nodes.some(node => node.id === source) || !graph.nodes.some(node => node.id === target)) return "Both nodes must be in this workflow.";
   if (graph.nodes.find(node => node.id === target)?.kind === "brief") return "The brief is the workflow’s starting node.";
+  if (graph.nodes.find(node => node.id === target)?.kind === "reference") return "A reference is an input. Connect it into a stage instead.";
   if (graph.edges.some(edge => edge.source === source && edge.target === target)) return "These nodes are already connected.";
   if (graph.edges.length >= 100) return "This workflow has reached its limit of 100 connections.";
   const visit = [target];
@@ -108,8 +122,8 @@ function connectionError(graph: WorkflowGraph, connection: Connection | Edge): s
   return null;
 }
 
-function Canvas({ graph, onChange, selected, onSelect, states, readOnly = false }: WorkflowCanvasProps) {
-  const [nodes, setNodes] = useState<CanvasNode[]>(() => graph.nodes.map(node => toCanvasNode(node, selected, states, readOnly)));
+function Canvas({ graph, onChange, selected, onSelect, states, readOnly = false, onOpen, warnings }: WorkflowCanvasProps) {
+  const [nodes, setNodes] = useState<CanvasNode[]>(() => graph.nodes.map(node => toCanvasNode(node, selected, states, readOnly, warnings?.[node.id])));
   const [edges, setEdges] = useState<Edge[]>(() => graph.edges.map(edge => toCanvasEdge(edge, states, readOnly)));
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [libraryQuery, setLibraryQuery] = useState("");
@@ -153,13 +167,13 @@ function Canvas({ graph, onChange, selected, onSelect, states, readOnly = false 
 
   useEffect(() => {
     setNodes(current => graph.nodes.map(node => ({
-      ...current.find(item => item.id === node.id), ...toCanvasNode(node, selected, states, readOnly),
+      ...current.find(item => item.id === node.id), ...toCanvasNode(node, selected, states, readOnly, warnings?.[node.id]),
     })));
     setEdges(current => graph.edges.map(edge => ({
       ...toCanvasEdge(edge, states, readOnly), selected: current.find(item => item.id === edge.id)?.selected || false,
     })));
     if (selected) setSelectedEdge("");
-  }, [graph, selected, states, readOnly]);
+  }, [graph, selected, states, readOnly, warnings]);
 
   useEffect(() => {
     if (!libraryOpen) return;
@@ -209,16 +223,28 @@ function Canvas({ graph, onChange, selected, onSelect, states, readOnly = false 
   const addNode = (kind: WorkflowNodeKind) => {
     if (readOnly) return;
     const current = graphRef.current;
-    if (current.nodes.length >= 40) { setNotice("This workflow has reached its limit of 40 nodes."); return; }
+    if (current.nodes.length >= 60) { setNotice("This workflow has reached its limit of 60 nodes."); return; }
     const mediaKind=current.nodes.some(node=>node.kind==="media"&&(node.media_kind||"image")==="image")?"video":"image";
-    if(kind!=="review"&&current.nodes.some(node=>node.kind===kind&&(kind!=="media"||(node.media_kind||"image")===mediaKind))){setNotice("This output stage is already in the workflow. Configure or revise the existing node.");return;}
+    if(kind==="reference"){
+      // A reference feeds the selected stage (or the first stage after the brief) from above it.
+      const target=current.nodes.find(node=>node.id===selected&&node.kind!=="brief"&&node.kind!=="reference")||current.nodes.find(node=>node.kind!=="brief"&&node.kind!=="reference");
+      if(!target){setNotice("Add a stage first, then attach a reference to it.");return;}
+      let at={x:target.position.x-30,y:target.position.y-190};
+      while(current.nodes.some(node=>Math.abs(node.position.x-at.x)<235&&Math.abs(node.position.y-at.y)<150))at={...at,x:at.x+250};
+      const ref:WorkflowNode={id:`reference-${crypto.randomUUID()}`,kind,title:"Referensi",instructions:"",position:at,review:false,reference:{type:"link",name:"",url:"",content:""}};
+      commit({...current,nodes:[...current.nodes,ref],edges:[...current.edges,{id:`edge-${crypto.randomUUID()}`,source:ref.id,target:target.id}]});
+      onSelect(ref.id);setSelectedEdge("");setLibraryOpen(false);setLibraryQuery("");setNotice(`Reference added to ${target.title}. Fill it in on the right.`);
+      void flow.setCenter(at.x+114,at.y+66,{zoom:Math.max(flow.getZoom(),0.75),duration:window.matchMedia("(prefers-reduced-motion: reduce)").matches?0:200});
+      return;
+    }
+    if(!repeatable(kind)&&current.nodes.some(node=>node.kind===kind&&(kind!=="media"||(node.media_kind||"image")===mediaKind))){setNotice("This output stage is already in the workflow. Configure or revise the existing node.");return;}
     const source = current.nodes.find(node => node.id === selected) || current.nodes.find(node => node.kind === "brief");
     const siblings = current.edges.filter(edge => edge.source === source?.id).length;
     let position = source ? { x: source.position.x + 300, y: source.position.y + siblings * 174 } : { x: 80, y: 100 };
     while (current.nodes.some(node => Math.abs(node.position.x - position.x) < 235 && Math.abs(node.position.y - position.y) < 150)) position = { ...position, y: position.y + 174 };
     const node: WorkflowNode = {
       id: `${kind}-${crypto.randomUUID()}`, kind, title: workflowNodeInfo[kind].label,
-      instructions: "", position, review: kind === "review" || kind === "script",
+      instructions: "", position, review: kind === "review" || kind === "script" || kind === "custom",
       ...(kind === "media" ? { provider: "manual" as const, media_kind: mediaKind } : {}),
     };
     const newEdges = source && current.edges.length < 100 ? [...current.edges, { id: `edge-${crypto.randomUUID()}`, source: source.id, target: node.id }] : current.edges;
@@ -267,6 +293,7 @@ function Canvas({ graph, onChange, selected, onSelect, states, readOnly = false 
         setSelectedEdge("");
       }}
       onBeforeDelete={async ({ nodes: deleting, edges: deletingEdges }) => readOnly ? false : { nodes: deleting.filter(node => node.data.node.kind !== "brief"), edges: deletingEdges }}
+      onNodeDoubleClick={(_event, node) => onOpen?.(node.id)}
       onNodeClick={(_event, node) => { onSelect(node.id); setSelectedEdge(""); setLibraryOpen(false); }}
       onEdgeClick={(_event, edge) => { onSelect(""); setSelectedEdge(edge.id); setLibraryOpen(false); }}
       onPaneClick={() => { onSelect(""); setSelectedEdge(""); setLibraryOpen(false); }}
@@ -283,12 +310,12 @@ function Canvas({ graph, onChange, selected, onSelect, states, readOnly = false 
       panOnDrag zoomOnDoubleClick={false} preventScrolling snapToGrid snapGrid={[10, 10]}
       colorMode="dark" attributionPosition="bottom-right"
     >
-      <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#383b46" />
+      <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#3b3b3b" />
     </ReactFlow>
 
     <div className="workflow-canvas-topbar">
       {!readOnly && <div className="workflow-canvas-edit-actions">
-        <button ref={addButtonRef} type="button" className="workflow-add-button" aria-label="Add workflow node" aria-expanded={libraryOpen} aria-controls={libraryId} disabled={graph.nodes.length >= 40}
+        <button ref={addButtonRef} type="button" className="workflow-add-button" aria-label="Add workflow node" aria-expanded={libraryOpen} aria-controls={libraryId} disabled={graph.nodes.length >= 60}
           onClick={() => { setLibraryOpen(open => !open); setHelpOpen(false); }}><Plus size={15} /><span>Add node</span></button>
         <span className="workflow-toolbar-divider" />
         <button type="button" className="workflow-tool-button" disabled={!canDelete} onClick={deleteSelected} aria-label={selectedEdge ? "Delete selected connection" : "Delete selected node"} title={selectedNode?.kind === "brief" ? "The brief is required" : "Delete selection"}><Trash2 size={14} /></button>
@@ -302,7 +329,7 @@ function Canvas({ graph, onChange, selected, onSelect, states, readOnly = false 
       <div className="workflow-library-options">
         {libraryKinds.map(kind => {
           const Icon = kindIcons[kind];
-          const existing=kind!=="review"&&(kind==="media"?graph.nodes.filter(node=>node.kind==="media").length>=2:graph.nodes.some(node=>node.kind===kind));
+          const existing=!repeatable(kind)&&(kind==="media"?graph.nodes.filter(node=>node.kind==="media").length>=2:graph.nodes.some(node=>node.kind===kind));
           return <button type="button" className={`workflow-library-option workflow-kind-${kind}`} key={kind} disabled={existing} onClick={() => addNode(kind)}>
             <span className="workflow-node-icon"><Icon size={15} /></span><span><strong>{workflowNodeInfo[kind].label}</strong><small>{existing?"Already in this workflow. Configure its existing node.":workflowNodeInfo[kind].description}</small></span><Plus size={13} />
           </button>;

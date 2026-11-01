@@ -3,9 +3,9 @@ import type { ChannelProfile } from "./channel-analytics";
 export { z };
 
 export const episodeStatuses = ["idea", "script", "storyboard", "audio", "footage", "render", "review", "published"] as const;
-export const jobTypes = ["render", "music", "ffmpeg", "vo", "image", "video"] as const;
+export const jobTypes = ["render", "music", "ffmpeg", "vo", "image", "video", "analyze"] as const;
 export const assetKinds = ["image", "video", "vo", "sfx", "bgm", "music", "render", "thumb"] as const;
-export const operations = ["research", "script", "hook", "diagnosis", "storyboard", "composition", "upload_pack", "vo", "image", "video"] as const;
+export const operations = ["research", "script", "hook", "diagnosis", "storyboard", "composition", "upload_pack", "vo", "image", "video", "custom"] as const;
 export const recordId = z.string().regex(/^[a-zA-Z0-9]{15}$/, "Invalid record ID");
 export const videoId = z.string().regex(/^[a-zA-Z0-9_-]{11}$/, "Enter a valid YouTube video ID");
 export const segment = z.string().min(1).max(120).refine(v => !/[\\/:\x00-\x1f]/.test(v) && v !== "." && v !== ".." && !/[. ]$/.test(v), "Invalid path segment");
@@ -20,13 +20,13 @@ export const beatSchema = z.object({
 export type Beat = z.infer<typeof beatSchema>;
 export const createEpisodeSchema = z.object({ channel: recordId, title: z.string().trim().min(1).max(200), format: z.enum(["short", "long"]), youtube_video_id: videoId.or(z.literal("")).default("") });
 export const updateEpisodeSchema = z.object({ title: z.string().trim().min(1).max(200).optional(), status: z.enum(episodeStatuses).optional(), youtube_video_id: videoId.or(z.literal("")).optional(), script_approved: z.boolean().optional(), script_revision: z.string().regex(/^[a-f0-9]{64}$/).optional(), published_at: z.iso.datetime().or(z.literal("")).refine(value => !value || Date.parse(value) <= Date.now(), "Publication time cannot be in the future").optional() });
-export const quoteRequestSchema = z.object({ operation: z.enum(operations), episode: recordId, provider: z.enum(["ninerouter", "elevenlabs", "flow", "webhook"]).optional(), input: z.string().max(100_000).default(""), beat: z.number().int().min(1).max(500).optional(), model: z.string().max(150).optional(), seconds: z.number().min(1).max(600).optional() });
+export const quoteRequestSchema = z.object({ operation: z.enum(operations), episode: recordId, provider: z.enum(["ninerouter", "elevenlabs", "flow", "webhook"]).optional(), input: z.string().max(100_000).default(""), beat: z.number().int().min(1).max(500).optional(), model: z.string().max(150).optional(), seconds: z.number().min(1).max(600).optional(), node_id: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/).optional() });
 export type QuoteRequest = z.infer<typeof quoteRequestSchema>;
 export const localJobSchema = z.object({ episode: recordId, type: z.enum(["render", "music", "ffmpeg"]), prompt: z.string().max(10_000).default(""), lyrics: z.string().max(10_000).default(""), seconds: z.number().min(1).max(600).default(30), seed: z.number().int().min(0).max(2_147_483_647).default(42) });
-export const modelRouteSchema = z.object({ task: z.enum(["research", "script", "hook", "diagnosis", "storyboard", "composition", "upload_pack"]), model: z.string().trim().min(1).max(150), billing: z.enum(["free", "paid"]), usd_per_1k_chars: z.number().min(0).max(1000), max_output_tokens: z.number().int().min(256).max(32000).default(4000) }).refine(r => r.billing !== "paid" || r.usd_per_1k_chars > 0, "Paid routes require a positive price estimate");
+export const modelRouteSchema = z.object({ task: z.enum(["chat", "analysis", "prompt", "research", "script", "hook", "diagnosis", "storyboard", "composition", "upload_pack"]), model: z.string().trim().min(1).max(150), billing: z.enum(["free", "paid"]), usd_per_1k_chars: z.number().min(0).max(1000), max_output_tokens: z.number().int().min(256).max(32000).default(4000) }).refine(r => r.billing !== "paid" || r.usd_per_1k_chars > 0, "Paid routes require a positive price estimate");
 export interface Channel { id: string; name: string; handle: string; playbook_path: string; color: string; youtube_channel_id: string; oauth_ref: string; profile?: ChannelProfile; }
 export interface Episode { id: string; channel: string; title: string; slug: string; status: typeof episodeStatuses[number]; format: "short" | "long"; vault_path: string; drive_folder_id: string; youtube_video_id: string; script_approved: boolean; script_meta: Record<string, unknown>; published_at?: string; created: string; updated: string; }
-export interface Asset { id: string; episode: string; kind: typeof assetKinds[number]; drive_file_id: string; drive_path: string; source: string; selected: boolean; asset_group?: string; tags?: string[] | null; meta: Record<string, unknown>; created: string; }
+export interface Asset { id: string; episode: string; project?: string; title?: string; deleted?: boolean; kind: typeof assetKinds[number]; drive_file_id: string; drive_path: string; source: string; selected: boolean; asset_group?: string; tags?: string[] | null; meta: Record<string, unknown>; created: string; }
 export interface Job { id: string; type: typeof jobTypes[number]; episode: string; payload: Record<string, unknown>; status: "queued" | "running" | "done" | "failed" | "cancelled"; worker_id: string; progress: number; log: string; result_asset: string; attempts: number; started: string; finished: string; created: string; updated: string; }
 export interface Worker { id: string; worker_key: string; hostname: string; capabilities: string[]; gpu: string; heartbeat: string; }
 export interface RetentionPoint { elapsed_ratio: number; retention: number; }
@@ -83,10 +83,17 @@ function scriptLines(script: string) {
 export function spokenScript(script: string): string {
   return normalizeWords(scriptLines(script).map(line => line.text).join("\n"));
 }
+// Writing aids that are never spoken: second-range cues ("[0-3s]"), section labels ("HOOK:") and
+// visual directions ("(Animasi: …)"). Voice tags such as "[whispering]" stay, since they are performed.
+const spokenOnly = (line: string) => line
+  .replace(/\[\s*\d[\d.,:]*\s*[a-z]{0,6}\.?\s*(?:-|–|—|to|sampai|s\/d)\s*\d[\d.,:]*\s*[a-z]{0,6}\.?\s*\]/gi, " ")
+  .replace(/(^|\s)(?:HOOK|CTA|INTRO|OUTRO|BODY|ISI|PEMBUKA|PENUTUP|ENDING|LOOP|PAYOFF|SETUP|TWIST|FAKTA)\s*\d*\s*:/g, " ")
+  .replace(/\((?:animasi|animation|visual|sfx|musik|music|teks|text|on-screen|b-roll|cut|transisi|transition)\b[^)]*\)/gi, " ");
+const unspokenRemoved = (lines: string[]) => normalizeWords(lines.map(spokenOnly).join("\n"));
 export function validateStoryboardCoverage(script: string, value: unknown): Beat[] {
   const beats = validateStoryboard(value);
-  const narration = spokenScript(script);
-  if (!narration || !beats.length || beats.some(beat => !beat.text.trim()) || normalizeWords(beats.map(beat => beat.text).join(" ")) !== narration) throw new Error("Storyboard must preserve the complete approved voiceover once, in its original order");
+  const narration = unspokenRemoved(scriptLines(script).map(line => line.text));
+  if (!narration || !beats.length || beats.some(beat => !beat.text.trim()) || unspokenRemoved(beats.map(beat => beat.text)) !== narration) throw new Error("Storyboard must preserve the complete approved voiceover once, in its original order");
   return beats;
 }
 
@@ -126,7 +133,27 @@ export function estimateCost(units: number, pricePerUnit: number): number {
 }
 export function parseJsonOutput(text: string): unknown {
   const clean = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-  return JSON.parse(clean);
+  try { return JSON.parse(clean); }
+  catch (error) {
+    // Models often wrap the JSON in prose or a trailing note: take the first complete object or array.
+    const found = firstJsonValue(text);
+    if (found === undefined) throw error;
+    return JSON.parse(found);
+  }
+}
+function firstJsonValue(text: string): string | undefined {
+  for (const open of text.matchAll(/[{[]/g)) {
+    const start = open.index!;
+    let depth = 0, inString = false, escaped = false;
+    for (let i = start; i < text.length; i++) {
+      const c = text[i];
+      if (inString) { if (escaped) escaped = false; else if (c === "\\") escaped = true; else if (c === '"') inString = false; continue; }
+      if (c === '"') inString = true;
+      else if (c === "{" || c === "[") depth++;
+      else if (c === "}" || c === "]") { depth--; if (depth === 0) { const candidate = text.slice(start, i + 1); try { JSON.parse(candidate); return candidate; } catch { break; } } }
+    }
+  }
+  return undefined;
 }
 export const diagnosisSchema = z.object({ summary: z.string().min(1), findings: z.array(z.object({ timestamp: z.number().min(0), quote: z.string().min(1), observation: z.string().min(1), recommendation: z.string().min(1) })).min(1) });
 export function validateDiagnosis(value: unknown, script: string, duration: number, beats?: Beat[]) {
@@ -155,3 +182,5 @@ export * from "./evaluation";
 export * from "./scheduler";
 export * from "./composition";
 export * from "./assets";
+export * from "./foryou";
+export * from "./studio-chat";

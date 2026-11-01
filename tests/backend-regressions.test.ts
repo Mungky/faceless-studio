@@ -80,3 +80,12 @@ test("invalid storyboard saves retain the valid document and its history", async
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("storyboard coverage ignores second-range cues, section labels and visual directions only", () => {
+  const validate = core.validateStoryboardCoverage;
+  const script = "[0-3s] HOOK: Langit itu nggak biru. (Animasi: langit berubah warna)\n[3-9s] Cahaya matahari terlihat putih.";
+  assert.equal(validate(script, [beat(1, "Langit itu nggak biru."), beat(2, "Cahaya matahari terlihat putih.")]).length, 2);
+  assert.throws(() => validate(script, [beat(1, "Langit itu nggak biru.")]), /complete|voiceover|narration/i);
+  assert.throws(() => validate("[whispering] Pelan-pelan.", [beat(1, "Pelan-pelan.")]), /complete|voiceover|narration/i);
+  assert.equal(validate("[0-3 dtk] Kenapa bulan?\n[3-8 dtk] Karena sinkron.", [beat(1, "Kenapa bulan?"), beat(2, "Karena sinkron.")]).length, 2);
+});

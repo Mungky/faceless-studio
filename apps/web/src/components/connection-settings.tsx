@@ -10,21 +10,21 @@ type Connection={url:string;url_source:"app"|"server"|"none";has_key:boolean};
 type Check={connected:boolean;message:string;models?:string[]};
 const services:{id:Provider;name:string;note:string;placeholder:string;keyLabel:string}[]=[
   {id:"ninerouter",name:"9Router",note:"Model untuk riset, naskah, dan evaluasi.",placeholder:"http://alamat-server/v1",keyLabel:"API key"},
-  {id:"searxng",name:"SearXNG",note:"Pencarian sumber untuk riset dan FYP.",placeholder:"http://alamat-server:8080",keyLabel:"API key (jika perlu)"},
+  {id:"searxng",name:"SearXNG",note:"Pencarian sumber untuk riset dan For You.",placeholder:"http://alamat-server:8080",keyLabel:"API key (jika perlu)"},
   {id:"obscura",name:"Obscura",note:"Membaca halaman sumber lewat browser.",placeholder:"http://alamat-server/mcp",keyLabel:"API key (jika perlu)"}];
 
-export function ConnectionSettings({data,busy,perform,refresh}:{data:Dashboard;busy:boolean;perform:Perform;refresh:()=>Promise<void>}){
+export function ServiceSettings({busy,perform}:{busy:boolean;perform:Perform}){
   const [state,setState]=useState<Record<string,Connection>>();const [error,setError]=useState("");
-  const load=()=>api<Record<string,Connection>>("settings/connections",undefined,"GET").then(setState).catch(e=>setError(e instanceof Error?e.message:"Koneksi belum dapat dimuat."));
-  useEffect(()=>{void load();},[]);
-  const [models,setModels]=useState<string[]>([]);
-  useEffect(()=>{if(!state?.ninerouter?.url||!state.ninerouter.has_key)return;let live=true;api<Check>("settings/connections/check",{provider:"ninerouter"}).then(r=>{if(live&&r.models?.length)setModels(r.models);}).catch(()=>undefined);return()=>{live=false;};},[state?.ninerouter?.url,state?.ninerouter?.has_key]);
+  useEffect(()=>{api<Record<string,Connection>>("settings/connections",undefined,"GET").then(setState).catch(e=>setError(e instanceof Error?e.message:"Koneksi belum dapat dimuat."));},[]);
   return <div className="connection-settings">
-    <p className="muted">Dipakai bersama oleh semua channel. Key disimpan terenkripsi di server dan tidak ditampilkan lagi.</p>
     {error&&<p role="alert" className="project-notice project-notice-error">{error}</p>}
-    {!state?<p className="muted">Memuat…</p>:services.map(s=><ServiceForm key={s.id} service={s} current={state[s.id]} busy={busy} perform={perform} saved={next=>setState(next)} found={list=>{if(list.length)setModels(list);}}/>)}
-    <ModelRoutes data={data} models={models} busy={busy} perform={perform} refresh={refresh}/>
+    {!state?<p className="muted">Memuat…</p>:services.map(s=><ServiceForm key={s.id} service={s} current={state[s.id]} busy={busy} perform={perform} saved={next=>setState(next)} found={()=>undefined}/>)}
   </div>;
+}
+export function ModelSettings({data,busy,perform,refresh}:{data:Dashboard;busy:boolean;perform:Perform;refresh:()=>Promise<void>}){
+  const [models,setModels]=useState<string[]>([]);
+  useEffect(()=>{let live=true;api<Check>("settings/connections/check",{provider:"ninerouter"}).then(r=>{if(live&&r.models?.length)setModels(r.models);}).catch(()=>undefined);return()=>{live=false;};},[]);
+  return <ModelRoutes data={data} models={models} busy={busy} perform={perform} refresh={refresh}/>;
 }
 function ServiceForm({service,current,busy,perform,saved,found}:{service:typeof services[number];current:Connection;busy:boolean;perform:Perform;saved:(next:Record<string,Connection>)=>void;found:(models:string[])=>void}){
   const [url,setUrl]=useState(current?.url||""),[key,setKey]=useState(""),[note,setNote]=useState(""),[result,setResult]=useState<Check>();
@@ -41,7 +41,7 @@ function ServiceForm({service,current,busy,perform,saved,found}:{service:typeof 
   </form>;
 }
 
-const taskLabels:Record<string,string>={research:"Riset",script:"Naskah",hook:"Hook",diagnosis:"Evaluasi performa",storyboard:"Storyboard",composition:"Komposisi",upload_pack:"Paket unggah"};
+const taskLabels:Record<string,string>={chat:"Chat Studio",analysis:"Analisis video",research:"Riset",script:"Naskah",hook:"Hook",diagnosis:"Evaluasi performa",storyboard:"Storyboard",composition:"Komposisi",upload_pack:"Paket unggah"};
 function ModelRoutes({data,models,busy,perform,refresh}:{data:Dashboard;models:string[];busy:boolean;perform:Perform;refresh:()=>Promise<void>}){
   return <section className="settings-section model-routes"><div><h2>Model per tugas</h2><p className="muted">Pilih model dari 9Router untuk tiap tugas.{models.length?" "+models.length+" model tersedia.":" Hubungkan 9Router agar daftar model muncul; mengetik ID manual tetap bisa."} Tandai gratis hanya jika penyedia aslinya memang gratis.</p></div>
     <datalist id="route-models">{models.map(m=><option key={m} value={m}/>)}</datalist>

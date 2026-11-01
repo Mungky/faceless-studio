@@ -13,9 +13,12 @@ import { dashboard, configuration, episodeContext, episodeDetails, createEpisode
 import { readDocument, readBeats, writeDocument, writeBeats, documentNames, readPlaybook,documentHistory,historicalDocument } from "../../../server/vault";
 import { projectData, syncProject, syncProjectProfiles, videoAnalyticsData, syncVideoAnalytics } from "../../../server/projects";
 import { createChannel } from "../../../server/channels";
-import {workflowLibrary,workflowTemplate,createWorkflowTemplate,saveWorkflowTemplate,createWorkflowRun,workflowRunData,messageWorkflowRun,actWorkflowRun} from "../../../server/workflows";
+import {workflowLibrary,workflowTemplate,createWorkflowTemplate,saveWorkflowTemplate,deleteWorkflowTemplate,createWorkflowRun,workflowRunData,messageWorkflowRun,actWorkflowRun,closeWorkflowRun,archiveWorkflowRun} from "../../../server/workflows";
 import {workspaceData,channelPreferences,saveChannelPreferences,createProduction,discoveryData,addCompetitor,discover,saveReference,inspectReference,generateVideoReport,proposeTemplate,decideProposal,recoverTask} from "../../../server/workspace";
 import {automationTick} from "../../../server/scheduler";
+import {runTask,sendTaskMessage} from "../../../server/task-agent";
+import {studioThreads,studioThread,projectThread,createStudioThread,sendStudioMessage,applyStudioAction} from "../../../server/studio-chat";
+import {forYouData,addReference,searchReferences,saveForYouReference,analyzeReference,addForYouCompetitor,completeDeepAnalysis} from "../../../server/foryou";
 import {organizeAssets,updateAsset} from "../../../server/assets";
 import {compositionData,saveComposition,queueComposition,reviewComposition,compositionJobCurrent} from "../../../server/compositions";
 
@@ -68,6 +71,21 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
     if(route==="settings/keys"&&method==="POST")return reply(await saveProviderKey(await body(request)));
     if (route === "dashboard" && method === "GET") return reply(await dashboard());
     if(route==="workspace"&&method==="GET")return reply(await workspaceData());
+    if(parts[0]==="studio"&&parts[1]==="projects"&&parts[2]&&parts[3]==="thread"&&method==="GET")return reply(await projectThread(recordId.parse(parts[2])));
+    if(parts[0]==="studio"&&parts[1]==="threads"){
+      if(!parts[2]&&method==="GET")return reply(await studioThreads());
+      if(!parts[2]&&method==="POST")return reply(await createStudioThread(await body(request)),201);
+      if(parts[2]&&!parts[3]&&method==="GET")return reply(await studioThread(parts[2]));
+      if(parts[3]==="messages"&&method==="POST")return reply(await sendStudioMessage(parts[2],await body(request)));
+      if(parts[3]==="apply"&&method==="POST")return reply(await applyStudioAction(parts[2],await body(request),user.id));
+    }
+    if(parts[0]==="foryou"){
+      if(route==="foryou"&&method==="GET")return reply(await forYouData());
+      if(route==="foryou/references"&&method==="POST")return reply(await addReference(await body(request)),201);
+      if(route==="foryou/search"&&method==="POST")return reply(await searchReferences(await body(request)));
+      if(route==="foryou/competitors"&&method==="POST")return reply(await addForYouCompetitor(await body(request)),201);
+      if(parts[1]==="references"&&parts[2]){const id=z.string().uuid().parse(parts[2]);if(!parts[3]&&method==="PUT")return reply(await saveForYouReference(id,await body(request)));if(parts[3]==="analyze"&&method==="POST")return reply(await analyzeReference(id,await body(request)));}
+    }
     if(route==="workspace/episodes"&&method==="POST")return reply(await createProduction(await body(request),user.id),201);
     if(parts[0]==="workspace"&&parts[1]==="channels"&&parts[2]){
       const channel=recordId.parse(parts[2]);
@@ -88,6 +106,7 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
     if(parts[0]==="workflows"&&parts[1]){
       if(parts.length===2&&method==="GET")return reply(await workflowTemplate(parts[1]));
       if(parts.length===2&&method==="PUT")return reply(await saveWorkflowTemplate(parts[1],await body(request)));
+      if(parts.length===2&&method==="DELETE")return reply(await deleteWorkflowTemplate(parts[1]));
       if(parts.length===3&&parts[2]==="playbook"&&method==="GET"){const template=await workflowTemplate(parts[1]);return reply({content:template.playbook_content??(template.playbook_path?await readPlaybook(template.playbook_path):template.instructions)});}
     }
     if(route==="workflow-runs"&&method==="POST")return reply(await createWorkflowRun(await body(request),user.id),201);
@@ -96,6 +115,10 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
       if(parts.length===2&&method==="GET")return reply(await workflowRunData(id));
       if(parts.length===3&&parts[2]==="messages"&&method==="POST")return reply(await messageWorkflowRun(id,await body(request),user.id));
       if(parts.length===3&&parts[2]==="actions"&&method==="POST")return reply(await actWorkflowRun(id,await body(request),user.id));
+      if(parts.length===3&&parts[2]==="advance"&&method==="POST")return reply(await runTask(id,await body(request),user.id));
+      if(parts.length===3&&parts[2]==="chat"&&method==="POST")return reply(await sendTaskMessage(id,await body(request),user.id));
+      if(parts.length===3&&parts[2]==="archive"&&method==="POST")return reply(await archiveWorkflowRun(id,await body(request)));
+      if(parts.length===3&&parts[2]==="close"&&method==="POST")return reply(await closeWorkflowRun(id,await body(request)));
     }
     if (route === "channels" && method === "POST") return reply(await createChannel(await body(request)),201);
     if (route === "projects/sync" && method === "POST") return reply(await syncProjectProfiles());
@@ -164,15 +187,17 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
     }
     if (route === "assets/upload" && method === "POST") {
       const length = Number(request.headers.get("content-length") || 0); if (length > 101_000_000) throw new Error("Upload exceeds 100 MB. Use the worker for larger files.");
-      const form = await request.formData(); const episodeId = recordId.parse(form.get("episode")); const kind = z.enum(assetKinds).parse(form.get("kind")); const file = form.get("file");
+      const form = await request.formData(); const episodeId = form.get("episode") ? recordId.parse(form.get("episode")) : ""; const kind = z.enum(assetKinds).parse(form.get("kind")); const file = form.get("file");
+      const project = z.string().trim().max(120).parse(form.get("project") || ""), title = z.string().trim().max(200).parse(form.get("title") || "");
       if (!(file instanceof File) || file.size > 100_000_000 || file.size === 0) throw new Error("Choose a non-empty media file under 100 MB.");
       const extension = path.extname(file.name).toLowerCase();
       if (![".jpg", ".jpeg", ".png", ".webp", ".mp4", ".webm", ".mp3", ".wav", ".m4a", ".flac"].includes(extension)) throw new Error("Unsupported media format");
-      const { driveBase } = await episodeContext(episodeId); const directory = path.resolve(process.env.STUDIO_CACHE_ROOT || ".cache", "uploads"); await mkdir(directory, { recursive: true });
+      // Library uploads without an episode live under a per-project folder.
+      const driveBase = episodeId ? (await episodeContext(episodeId)).driveBase : "Faceless/_library/" + (project.replace(/[^\w -]+/g, "").trim().replace(/\s+/g, "-") || "umum"); const directory = path.resolve(process.env.STUDIO_CACHE_ROOT || ".cache", "uploads"); await mkdir(directory, { recursive: true });
       const filename = `01_upload-${randomBytes(6).toString("hex")}_v1${extension}`; const local = path.join(directory, filename); await writeFile(local, Buffer.from(await file.arrayBuffer()));
       const folder = { image: "stills", video: "clips", vo: "vo", sfx: "sfx", bgm: "bgm", music: "music", render: "renders", thumb: "thumb" }[kind];
       const saved = await new DriveConnector().upload(local, `${driveBase}/${folder}/${filename}`);
-      return reply(await db.create<Asset>("assets", { episode: episodeId, kind, drive_file_id: saved.id, drive_path: saved.path, source: "upload", selected: true, meta: { filename: file.name, size: saved.size } }), 201);
+      return reply(await db.create<Asset>("assets", { episode: episodeId, project, title: title || path.basename(file.name, extension).slice(0, 200), kind, drive_file_id: saved.id, drive_path: saved.path, source: "upload", selected: true, meta: { filename: file.name, size: saved.size } }), 201);
     }
     if (route === "analytics/sync" && method === "POST") {
       const input = z.object({ episode: recordId.optional(), days: z.number().int().min(1).max(365).default(28) }).parse(await body(request));
@@ -228,8 +253,13 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
 async function handleWorker(request: NextRequest, parts: string[]) {
   if (!secretMatches(request.headers.get("authorization")?.replace(/^Bearer /, "") || "", process.env.WORKER_TOKEN)) return reply({ error: "Unauthorized worker" }, 401);
   const route = parts.join("/");
+  if (route === "analysis" && request.method === "POST") {
+    const input = await body(request) as { worker_id?: string; job_id?: string }; const job = await db.get<{ type: string; worker_id: string; status: string }>("jobs", recordId.parse(input.job_id));
+    if (job.type !== "analyze" || job.worker_id !== input.worker_id || job.status !== "running") return reply({ error: "Job is not leased to this worker" }, 409);
+    return reply(await completeDeepAnalysis(input));
+  }
   if (route === "heartbeat" && request.method === "POST") {
-    const input = z.object({ worker_key: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/), hostname: z.string().min(1).max(120), capabilities: z.array(z.enum(["render", "music", "ffmpeg", "image", "video"])).max(5), gpu: z.string().max(300).default("") }).parse(await body(request));
+    const input = z.object({ worker_key: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/), hostname: z.string().min(1).max(120), capabilities: z.array(z.enum(["render", "music", "ffmpeg", "image", "video", "analyze"])).max(6), gpu: z.string().max(300).default("") }).parse(await body(request));
     const [existing] = await db.list<Worker>("workers", `worker_key=${filterValue(input.worker_key)}`); const data = { ...input, heartbeat: new Date().toISOString() };
     return reply(existing ? await db.update("workers", existing.id, data) : await db.create("workers", data));
   }
@@ -271,4 +301,4 @@ async function previewAsset(request: NextRequest, asset: Asset) {
   headers["Content-Length"] = String(size);
   return new NextResponse(Readable.toWeb(createReadStream(local)) as ReadableStream<Uint8Array>, { headers });
 }
-export { handle as GET, handle as POST, handle as PUT, handle as PATCH };
+export { handle as GET, handle as POST, handle as PUT, handle as PATCH, handle as DELETE };

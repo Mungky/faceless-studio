@@ -38,6 +38,7 @@ export class StudioDatabase {
   get<T>(collection: string, id: string) { return this.request<T>(`/api/collections/${collection}/records/${encodeURIComponent(id)}`); }
   create<T>(collection: string, body: unknown) { return this.request<T>(`/api/collections/${collection}/records`, { method: "POST", body: JSON.stringify(body) }); }
   update<T>(collection: string, id: string, body: unknown) { return this.request<T>(`/api/collections/${collection}/records/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) }); }
+  delete(collection: string, id: string) { return this.request<void>(`/api/collections/${collection}/records/${encodeURIComponent(id)}`, { method: "DELETE" }); }
   custom<T>(route: string, body: unknown) { return this.request<T>(`/api/studio/${route}`, { method: "POST", body: JSON.stringify(body) }); }
 }
 export const db = new StudioDatabase();

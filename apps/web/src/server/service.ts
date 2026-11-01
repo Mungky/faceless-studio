@@ -7,7 +7,7 @@ import { z, type Beat, type Channel, type Episode, type Asset, type Job, type Wo
 import { NineRouterConnector, ElevenLabsConnector, DriveConnector, YouTubeConnector, type YouTubeTokens, studioSupplement, FLOW_MAX_ATTEMPTS, requireCappedFlow } from "@studio/connectors";
 import { db, filterValue } from "./pocketbase";
 import { decrypt } from "./auth";
-import { readDocument, readPlaybook, readBeats, readStoryboardState, writeDocument, writeBeats, writeStoryboardDraft, documentNames } from "./vault";
+import { readNodeOutput, writeNodeOutput, readDocument, readPlaybook, readBeats, readStoryboardState, writeDocument, writeBeats, writeStoryboardDraft, documentNames } from "./vault";
 
 export const spendingSchema = z.object({
   daily_usd: z.number().min(0).max(10000).nullable(), daily_credits: z.number().int().min(0).max(1_000_000).nullable(),
@@ -60,7 +60,7 @@ export async function createEpisode(input: { channel: string; title: string; for
   return episode;
 }
 
-interface QuotePayload { billing?:"free"|"paid"; system?: string; input: string; model?: string; max_tokens?: number; drive_base: string; beat?: number; format: string; voice_id?: string; seconds?: number; snapshot?: string; source_script?: string; script_revision?: string; storyboard_revision?: string; diagnosis_beats?: Beat[]; reference?: { id: string; drive_path: string }; workflow_run?:string; workflow_revisions?:Record<string,string>; }
+interface QuotePayload { billing?:"free"|"paid"; system?: string; input: string; model?: string; max_tokens?: number; drive_base: string; beat?: number; format: string; voice_id?: string; seconds?: number; snapshot?: string; source_script?: string; script_revision?: string; storyboard_revision?: string; diagnosis_beats?: Beat[]; reference?: { id: string; drive_path: string }; workflow_run?:string; node_id?: string; workflow_revisions?:Record<string,string>; }
 type InternalQuote = SpendQuote & { payload: QuotePayload; requested_by: string };
 export async function makeQuote(input: QuoteRequest, owner: string, workflowRun?:string) {
   if (["image", "video"].includes(input.operation) && input.provider !== "webhook") requireCappedFlow();
@@ -103,8 +103,9 @@ export async function makeQuote(input: QuoteRequest, owner: string, workflowRun?
   } else {
     provider = "ninerouter";
     if (!await serviceUrl("ninerouter")) throw new Error("Connect 9Router first.");
-    const [route] = await db.list<ModelRoute>("model_routes", `task=${filterValue(input.operation)}`);
-    if (!route) throw new Error(`Choose a model and billing policy for ${input.operation} in Models first.`);
+    // Custom stages have no route of their own; they write with the script model.
+    const [taskRoute] = await db.list<ModelRoute>("model_routes", `task=${filterValue(input.operation === "custom" ? "script" : input.operation)}`);
+    if (!taskRoute) throw new Error(`Choose a model and billing policy for ${input.operation === "custom" ? "script" : input.operation} in Models first.`);
     const script = await readDocument(episode.vault_path, "script.md");
     if (input.operation === "storyboard"||input.operation === "composition") {
       if (!scriptIsApproved(episode, script)) throw new Error("Read and approve the current complete script revision before creating a storyboard.");
@@ -112,7 +113,9 @@ export async function makeQuote(input: QuoteRequest, owner: string, workflowRun?
       payload.storyboard_revision = documentRevision(await readDocument(episode.vault_path, "storyboard.md"));
     }
     const research = await readDocument(episode.vault_path, "riset.md");
-    const workflowContext = episode.script_meta?.workflow_context as { playbook_path?: string; playbook_snapshot?: string; instructions?: string } | undefined;
+    const workflowContext = episode.script_meta?.workflow_context as { playbook_path?: string; playbook_snapshot?: string; instructions?: string; model?: string } | undefined;
+    // An episode may pin one of the configured models; it then brings that route's own billing and price.
+    const route = workflowContext?.model ? (await db.list<ModelRoute>("model_routes")).find(r => r.model === workflowContext.model) || taskRoute : taskRoute;
     const playbookPath = workflowContext?.playbook_path ?? channel.playbook_path;
     const playbook = workflowContext?.playbook_snapshot ?? (playbookPath ? await readPlaybook(playbookPath) : `Channel: ${channel.name}. Follow the production brief and preserve the complete approved narration.`);
     payload.billing=route.billing; payload.model = route.model; payload.max_tokens = route.max_output_tokens;
@@ -122,7 +125,9 @@ export async function makeQuote(input: QuoteRequest, owner: string, workflowRun?
       input.operation === "script" ? 'Return JSON only: {"script":"complete production script","hook_score":0,"virality_score":0,"duration_seconds":30}. Scores are editorial estimates out of 100, never performance predictions. Include time cues in the script.' :
       input.operation === "storyboard" ? 'Return JSON only: {"beats":[{"index":1,"text":"exact voiceover","prompt":"complete still prompt","seconds":3,"image":"","video":""}]}. Preserve all approved spoken narration exactly once in order; omit only structural Markdown headings and leading time cues. Do not omit prose or bracketed performance directions. Use unique consecutive indices starting at 1, nonempty narration, and positive durations.' :
       input.operation === "hook" ? "Return Markdown hook alternatives with editorial scores, rationale, and no claim of guaranteed virality." :
-      input.operation === "upload_pack" ? "Return a complete Markdown upload pack: title options, description, tags, chapters when eligible. Do not publish or claim that anything was uploaded." : "";
+      input.operation === "upload_pack" ? "Return a complete Markdown upload pack: title options, description, tags, chapters when eligible. Do not publish or claim that anything was uploaded." :
+      input.operation === "custom" ? "Complete the stage described under Stage below. Return Markdown only." : "";
+    if (input.operation === "custom") { if (!input.node_id) throw new Error("A custom stage quote needs its workflow node."); payload.node_id = input.node_id; }
     if (input.operation === "diagnosis") {
       // Diagnosis is bound to verified timed narration below.
       const [snapshot] = await db.list<Snapshot>("analytics_snapshots", `episode=${filterValue(episode.id)}`, "-created", 1);
@@ -213,6 +218,8 @@ export async function approveQuote(quoteId: string, owner: string, workflowRun?:
         const output = validateDiagnosis(parseJsonOutput(generated.text), quote.payload.source_script || "", snapshot.metrics.duration_seconds, quote.payload.diagnosis_beats);
         const markdown = `# Diagnosis\n\n${output.summary}\n\n` + output.findings.map(f => `## ${timestamp(f.timestamp)}\n\n> ${f.quote}\n\n${f.observation}\n\n**Edit:** ${f.recommendation}`).join("\n\n");
         result = await db.create<Diagnosis>("diagnoses", { video_id: episode.youtube_video_id, snapshot: snapshot.id, findings_md: markdown, model_used: quote.payload.model });
+      } else if (quote.operation === "custom") {
+        await writeNodeOutput(episode.vault_path, quote.payload.node_id!, generated.text); result = { text: generated.text };
       } else {
         const name = quote.operation === "upload_pack" ? "upload-pack.md" : quote.operation === "research" ? "riset.md" : "script.md";
         const content = quote.operation === "hook" ? (await readDocument(episode.vault_path, "script.md")) + "\n\n## Hook alternatives\n\n" + generated.text : generated.text;

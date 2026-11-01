@@ -343,3 +343,52 @@ test("manual visual-plan sync rejects a valid table that omits approved narratio
   record.data.states.brief={status:"completed"};record.data.states.research={status:"completed"};record.data.states.script={status:"completed"};record.data.states.storyboard={status:"waiting_review",document:"storyboard.md",output:"Previous full plan",output_revision:documentRevision("Previous full plan")};
   await assert.rejects(f.api.actWorkflowRun(run.id,{action:"sync",node_id:"storyboard",expected_revision:run.revision},owner),/narration|script|cover|voiceover/i);assert.equal(f.calls,0);
 });
+
+test("references are inputs: they only feed stages and never block readiness",async()=>{
+  const api=await core(),graph=api.defaultWorkflowGraph();
+  graph.nodes.push({id:"ref",kind:"reference",title:"Video acuan",instructions:"",position:{x:0,y:-200},review:false,reference:{type:"video",name:"acuan",url:"https://youtu.be/dQw4w9WgXcQ",content:""}});
+  graph.edges.push({id:"ref-research",source:"ref",target:"research"});
+  assert.doesNotThrow(()=>api.validateWorkflowGraph(graph));
+  assert.deepEqual(api.readyWorkflowNodes(graph,{brief:{status:"completed"}}).map((n:any)=>n.kind),["research"]);
+  const into=structuredClone(graph);into.edges.push({id:"into-ref",source:"brief",target:"ref"});assert.throws(()=>api.validateWorkflowGraph(into),/input/i);
+  const loose=structuredClone(graph);loose.edges=loose.edges.filter((e:any)=>e.source!=="ref");assert.throws(()=>api.validateWorkflowGraph(loose),/reference/i);
+  const custom=structuredClone(graph);for(const id of ["c1","c2"]){custom.nodes.push({id,kind:"custom",title:id,instructions:"x",position:{x:900,y:0},review:true});custom.edges.push({id:"to-"+id,source:"script",target:id});}
+  assert.doesNotThrow(()=>api.validateWorkflowGraph(custom));
+});
+test("workflow edits wait as a draft while a task is open and apply once it closes",async t=>{
+  const f=await fixture(t);const builtin=await f.api.workflowTemplate("arthur");
+  const created=await f.api.createWorkflowRun({template:"arthur",title:"Open task",brief:"An honest brief"},owner);
+  const input={...builtin,expected_version:builtin.version};input.graph.nodes[1].instructions="Draft direction";
+  const drafted=await f.api.saveWorkflowTemplate("arthur",input);
+  assert.equal(drafted.draft.graph.nodes[1].instructions,"Draft direction");assert.notEqual(drafted.graph.nodes[1].instructions,"Draft direction");
+  await f.api.closeWorkflowRun(created.run.id,{closed:true,expected_revision:created.run.revision});
+  const applied=await f.api.workflowTemplate("arthur");
+  assert.equal(applied.graph.nodes[1].instructions,"Draft direction");assert.equal(applied.draft,null);assert.equal(applied.history.length,1);
+  const run=await f.api.workflowRunData(created.run.id);assert.notEqual(run.run.graph.nodes[1].instructions,"Draft direction");assert.equal(run.run.closed,true);
+});
+test("applying now skips the wait but keeps open tasks on their own snapshot",async t=>{
+  const f=await fixture(t);const builtin=await f.api.workflowTemplate("arthur");
+  const created=await f.api.createWorkflowRun({template:"arthur",title:"Open task",brief:"An honest brief"},owner);
+  const input={...builtin,expected_version:builtin.version,apply_now:true};input.graph.nodes[1].instructions="Now";
+  const saved=await f.api.saveWorkflowTemplate("arthur",input);assert.equal(saved.graph.nodes[1].instructions,"Now");assert.ok(!saved.draft);
+  const run=await f.api.workflowRunData(created.run.id);assert.notEqual(run.run.graph.nodes[1].instructions,"Now");
+});
+test("advancing a task moves through ready stages and stops at the first one that needs the owner",async t=>{
+  const f=await fixture(t);
+  const created=await f.api.createWorkflowRun({template:"arthur",title:"Auto",brief:"An honest brief"},owner);
+  const started=await f.api.advanceWorkflowRun(created.run.id,{},owner);assert.equal(started.advancing,true);
+  let current=await f.api.workflowRunData(created.run.id);for(let i=0;i<50&&current.advancing;i++){await new Promise(r=>setTimeout(r,20));current=await f.api.workflowRunData(created.run.id);}
+  assert.equal(current.advancing,false);
+  assert.equal(current.run.states.brief.status,"completed");
+  // No model provider exists in this fixture, so research stops honestly instead of being skipped.
+  assert.equal(current.run.states.research.status,"blocked");assert.equal(current.run.states.script?.status,"idle");assert.equal(f.calls,0);
+});
+test("archiving a task keeps it but no longer holds a workflow draft back",async t=>{
+  const f=await fixture(t);const builtin=await f.api.workflowTemplate("arthur");
+  const created=await f.api.createWorkflowRun({template:"arthur",title:"Archive me",brief:"An honest brief"},owner);
+  const input={...builtin,expected_version:builtin.version};input.graph.nodes[1].instructions="After archive";
+  assert.ok((await f.api.saveWorkflowTemplate("arthur",input)).draft);
+  await f.api.archiveWorkflowRun(created.run.id,{archived:true,expected_revision:created.run.revision});
+  assert.equal((await f.api.workflowTemplate("arthur")).graph.nodes[1].instructions,"After archive");
+  const kept=await f.api.workflowRunData(created.run.id);assert.equal(kept.run.archived,true);assert.equal(kept.detail.episode.title,"Archive me");
+});

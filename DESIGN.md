@@ -55,34 +55,39 @@ The approved 31 October 2026 redesign supersedes the violet sidebar and Dify can
 The owner selected dark monochrome, minimalism, and Linear/Notion/Vercel references.
 This is an Operate interface: clear tasks, legible state, and restrained visual structure.
 
+> **Superseded 31 Oct 2026 (evening):** the owner chose Higgsfield as the visual reference
+> and Google Flow for Assets. `apps/web/src/components/higgsfield.css` is the live skin and
+> overrides the tokens above. The sections below describe the current direction.
+
 ## Colors
 
-Use neutral charcoal layers and light primary buttons. Reserve subdued positive,
-pending and error tints for actual state. Channel banners and video thumbnails keep
-their original colors. Missing data is a dash or explicit empty state.
+Near-black canvas (#0a0a0a) with surfaces #141414/#1c1c1c and lime accent #d1fe17 with
+black text on it. Lime marks the primary action, the active nav item, selection and
+scores; never body text. Channel banners and thumbnails keep their colors.
 
 ## Typography
 
-Use the native system stack for app text, medium weight headings, and compact controls.
-Use a monospace face only for code. Phone template cards use larger text and controls.
+Native system stack. Page titles are heavy (800), tight and uppercase, Higgsfield-style.
+Controls are semibold. Monospace only for code.
 
 ## Layout
 
-The persistent top navigation has Channel, Studio and FYP. Channel details contain
-analytics, production, agent reports and settings. Studio has an episode composer and
-a three-column template grid, two columns on smaller desktops, one column on phones.
-An episode uses five stages above an editor and a conversation sidebar; on phones the
-conversation follows the editor. The normal page width is 1320px, editor width 1600px.
+A fixed left sidebar (Channel, Studio, For You, Asset; Pengaturan, PC status, refresh,
+logout and collapse at the bottom) becomes a drawer on phones. Workspace-wide settings live
+only in Pengaturan; a channel's own tab keeps its template, schedule and YouTube account.
+Studio is three panes: conversations, templates and Running tasks; the agent chat; and the
+workflow canvas (editable template or live run). Asset follows Google Flow: media types,
+projects with groups and trash on the left, a size-adjustable media grid, and a prompt bar.
 
 ## Elevation & Depth
 
-Separate panels by tonal steps and thin borders. The composer has a restrained shadow;
-other cards remain flat. Dialogs use the native modal backdrop and focus behavior.
+Tonal steps and thin borders. Prompt boxes (composer, chat, Flow prompt) float with a
+deep shadow; the primary action may carry a soft lime glow.
 
 ## Shapes
 
-Controls have 6px corners; cards and dialogs use 9–10px corners. Avatars and step
-numbers may be circular. Avoid ornamental gradients, glow, decorative charts or blobs.
+Pills for buttons, chips and segmented controls; 16–20px cards; 24px dialogs and prompt
+boxes. Native dropdowns, dates, ranges and checkboxes are restyled to match.
 
 ## Components
 
@@ -94,6 +99,6 @@ are rendered from the saved animation; placeholder illustrations never stand in 
 ## Do's and Don'ts
 
 Preserve unknown values, source ranges, freshness and visible connection failures.
-Keep planned publication targets separate from actual uploads. Keep settings within
-the channel. Preserve original manual scripts and recoverable versions. Do not restore
-the retired pipeline API, global Home/Settings, or node-canvas entry as the primary UI.
+Keep planned publication targets separate from actual uploads. Keep workspace-wide
+settings only in Pengaturan and per-channel settings only in the channel. Preserve original
+manual scripts and recoverable versions. Agent actions are proposals the owner applies.
