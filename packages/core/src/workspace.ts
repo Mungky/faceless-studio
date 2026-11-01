@@ -15,6 +15,13 @@ export const channelPreferencesSchema=z.object({
   competitor_enabled:z.boolean().default(false),
   niche:z.string().max(2000).default(""),
   model:z.string().max(150).default(""),
+  // Studio project identity and Routine: the display name never renames the vault folder.
+  project_name:z.string().trim().max(80).default(""),
+  // The project's workflow in the owner's n8n, when it has been built there.
+  n8n_workflow_id:z.string().max(64).default(""),
+  routine_mode:z.enum(["auto","approval"]).default("approval"),
+  // Archived projects leave the Studio list and their Routine stops; nothing is deleted.
+  archived:z.boolean().default(false),
   revision:z.number().int().min(0).default(0)
 }).strict();
 export type ChannelPreferences=z.infer<typeof channelPreferencesSchema>;

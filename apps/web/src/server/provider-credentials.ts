@@ -12,6 +12,7 @@ async function storedUrl(provider:Provider){const [row]=await db.list<{data:{url
 // A service address saved in the app wins over the server environment; clearing it falls back again.
 export async function serviceUrl(provider:Provider){return await storedUrl(provider)||process.env[envUrl[provider]]||"";}
 export function parseServiceUrl(value:string){const text=value.trim();if(!text)return "";let url:URL;try{url=new URL(text);}catch{throw new Error("Alamat layanan tidak valid. Contoh: http://192.168.1.10:8080");}if(!["http:","https:"].includes(url.protocol)||url.username||url.password)throw new Error("Gunakan alamat http:// atau https:// tanpa nama pengguna atau kata sandi.");return url.href.replace(/\/$/,"");}
+export async function routerAuth(){const url=await serviceUrl("ninerouter");const apiKey=await key("ninerouter")||process.env.NINEROUTER_API_KEY||"";return {url,apiKey};}
 export async function routerConnector(){return new NineRouterConnector(await serviceUrl("ninerouter"),await key("ninerouter")||process.env.NINEROUTER_API_KEY||"");}
 export async function browserConnector(){return new ObscuraConnector(await serviceUrl("obscura"),await key("obscura")||process.env.OBSCURA_API_KEY||"");}
 export async function searchConnector(){return new SearchConnector(await serviceUrl("searxng"),await key("searxng")||process.env.SEARXNG_API_KEY||"");}

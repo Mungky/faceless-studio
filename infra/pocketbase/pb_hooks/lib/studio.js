@@ -20,7 +20,7 @@ module.exports = {
       const busy = tx.findRecordsByFilter("jobs", 'worker_id = {:worker} && status = "running"', "", 1, 0, { worker: worker.id });
       if (busy.length) return;
       const capabilities = jsonField(worker, "capabilities", []);
-      const allowed = ["render", "music", "ffmpeg", "image", "video"].filter(type => capabilities.indexOf(type) >= 0);
+      const allowed = ["render", "music", "ffmpeg", "image", "video", "analyze"].filter(type => capabilities.indexOf(type) >= 0);
       if (!allowed.length) return;
       const filter = 'status = "queued" && (' + allowed.map(type => 'type = "' + type + '"').join(" || ") + ")";
       const jobs = tx.findRecordsByFilter("jobs", filter, "created", 1, 0);

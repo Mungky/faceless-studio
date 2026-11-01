@@ -1,22 +1,26 @@
 import "server-only";
 import {randomUUID} from "node:crypto";
-import {dueProductionSlots,boundedResearchDirection,assertAutomaticQuote,defaultChannelPreferences,channelPreferencesSchema,reportRange,type Channel,type Episode,type ScheduledTask,type ChannelPreferences,type WorkspaceRecord,type ModelRoute,type WorkflowRun,type SpendQuote} from "@studio/core";
+import {readyWorkflowNodes,resolveEpisodeTemplate,dueProductionSlots,boundedResearchDirection,assertAutomaticQuote,defaultChannelPreferences,channelPreferencesSchema,reportRange,type Channel,type Episode,type ScheduledTask,type ChannelPreferences,type WorkspaceRecord,type ModelRoute,type WorkflowRun,type SpendQuote} from "@studio/core";
 import {db,filterValue} from "./pocketbase";
 import {workspaceRows,workspaceRecord,saveWorkspace,createProduction,discover,generateVideoReport} from "./workspace";
-import {actWorkflowRun,messageWorkflowRun} from "./workflows";
+import {actWorkflowRun,messageWorkflowRun,workflowRunData,workflowLibrary,applyDraftIfIdle} from "./workflows";
 import {syncProject,syncVideoAnalytics} from "./projects";
 export async function automationTick(){
   const now=new Date(),day=now.toISOString().slice(0,10),results:{channel:string;task?:string;error?:string}[]=[];const channels=await db.list<Channel>("channels");
   for(const channel of channels){try{
     const prefs=channelPreferencesSchema.parse((await workspaceRecord<ChannelPreferences>("preferences:"+channel.id))?.data||defaultChannelPreferences(channel.id));
+    if(prefs.archived)continue;
     const tasks=await workspaceRows<ScheduledTask>(channel.id,"task");const episodes=await db.list<Episode>("episodes","channel="+filterValue(channel.id));
     const active=episodes.filter(e=>e.status!=="published"&&!e.youtube_video_id).length;const pending=tasks.filter(t=>t.data.kind==="research"&&!t.data.run_id&&["queued","running","blocked"].includes(t.data.status)).length;
-    const due=dueProductionSlots(prefs,now,active+pending,tasks.map(t=>t.key)).map(slot=>({...slot,kind:"research" as const}));
+    // A workflow edit waiting for open tasks holds the Routine, or the draft could never apply.
+    const library=await workflowLibrary();let workflow:{id:string;draft?:unknown}|undefined;try{workflow=resolveEpisodeTemplate(channel.id,prefs,library.templates);}catch{workflow=undefined;}
+    if(workflow?.draft)workflow=await applyDraftIfIdle(workflow.id)||workflow;
+    const due=workflow?.draft?[]:dueProductionSlots(prefs,now,active+pending,tasks.map(t=>t.key)).map(slot=>({...slot,kind:"research" as const}));
     if(prefs.analytics_enabled)due.push({key:"analytics:"+channel.id+":"+day,target_at:now.toISOString(),kind:"analytics" as any});
     if(prefs.competitor_enabled)due.push({key:"competitors:"+channel.id+":"+day,target_at:now.toISOString(),kind:"competitors" as any});
     for(const slot of due){if(tasks.some(t=>t.key===slot.key))continue;const task:ScheduledTask={id:randomUUID(),key:slot.key,channel:channel.id,kind:slot.kind,status:"queued",target_at:slot.target_at,created:now.toISOString(),attempts:0,revision:1};try{await saveWorkspace(slot.key,"task",channel.id,task,undefined,true);}catch(error){if(!String(error).includes("already exists"))throw error;}}
   }catch(error){results.push({channel:channel.id,error:(error as Error).message});}}
-  const owner=(await db.list<{id:string}>("studio_users","","created",1))[0];if(!owner)throw new Error("Studio owner is unavailable.");
+  const owner=(await db.list<{id:string}>("studio_users","","id",1))[0];if(!owner)throw new Error("Studio owner is unavailable.");
   // Atomic database claims cover overlapping cron calls and server restarts.
   for(let i=0;i<4;i++){
     const claimed=await db.custom<{record:WorkspaceRecord<ScheduledTask>|null}>("workspace-task-claim",{});if(!claimed.record)break;const row=claimed.record,task=row.data;
@@ -27,7 +31,7 @@ export async function automationTick(){
         const route=(await db.list<ModelRoute>("model_routes","task=\"research\""))[0];if(!route||route.billing!=="free")throw new Error("Riset otomatis memerlukan rute research gratis yang sudah dikonfirmasi. Rute berbayar tetap melalui persetujuan.");
         const refs=await discover(task.channel,{mode:"niche",query:prefs.niche});
         const direction=boundedResearchDirection(task.target_at,refs);
-        const created=await createProduction({channel:task.channel,title:"Riset · "+new Intl.DateTimeFormat("id-ID",{dateStyle:"medium",timeStyle:"short",timeZone:prefs.timezone}).format(new Date(task.target_at)),entry_mode:"research",content:prefs.niche||"Temukan ide berikutnya berdasarkan sejarah channel dan referensi.",request_key:row.key},owner.id);
+        const created=await createProduction({channel:task.channel,entry_mode:"research",at:task.target_at,request_key:row.key},owner.id);
         task.run_id=created.run.id;task.revision++;await saveWorkspace(row.key,row.kind,task.channel,task,row.data.revision-1);
         if(created.run.graph.nodes.some(n=>created.run.states[n.id]?.quote||created.run.states[n.id]?.status==="waiting_review"||created.run.states[n.id]?.status==="running"))throw new Error("Episode hasil pemulihan memerlukan pemeriksaan. Provider tidak dipanggil ulang.");
         const directed=await messageWorkflowRun(created.run.id,{expected_revision:created.run.revision,content:direction},owner.id);
@@ -35,6 +39,7 @@ export async function automationTick(){
         if(!node||!state?.quote)throw new Error(state?.error||"Riset belum dapat disiapkan.");
         const actual=await db.get<SpendQuote&{payload:{billing?:string}}>("spend_quotes",state.quote.id);assertAutomaticQuote(actual);
         const outcome=await actWorkflowRun(prepared.run.id,{action:"approve",node_id:node.id,quote_id:state.quote.id,expected_revision:prepared.run.revision},owner.id);if(["blocked","failed"].includes(outcome.run.states[node.id]?.status))throw new Error(outcome.run.states[node.id]?.error||"Riset memerlukan pemeriksaan hasil.");
+        if(prefs.routine_mode==="auto")await autoAdvance(outcome.run.id,owner.id);
       }else if(task.kind==="analytics"){
         const range=reportRange(28),project=await syncProject(task.channel,range.start,range.end);
         const existing=await workspaceRows<any>(task.channel,"report");const catalog=project.videos.filter(v=>v.visibility==="public").sort((a,b)=>Number(existing.some(r=>r.data.video_id===a.id))-Number(existing.some(r=>r.data.video_id===b.id))||b.published_at.localeCompare(a.published_at));
@@ -45,4 +50,24 @@ export async function automationTick(){
     const revision=task.revision;task.revision++;task.lease_until="";await saveWorkspace(row.key,row.kind,task.channel,task,revision);results.push({channel:task.channel,task:task.id,...(task.error?{error:task.error}:{})});
   }
   return {results};
+}
+
+// Routine "Auto": keep going without the owner until the plan (visual plan, or script without one)
+// waits for review. Only stages leading to the plan run, reviews before it are accepted as written,
+// and only confirmed-free quotes are approved. Generation and anything paid always wait.
+export async function autoAdvance(runId:string,owner:string){
+  for(let step=0;step<16;step++){
+    const {run}=await workflowRunData(runId) as {run:WorkflowRun};
+    const plan=run.graph.nodes.find(n=>n.kind==="storyboard")||run.graph.nodes.find(n=>n.kind==="script");if(!plan)return;
+    const leads=new Set([plan.id]);let grew=true;while(grew){grew=false;for(const e of run.graph.edges)if(leads.has(e.target)&&!leads.has(e.source)){leads.add(e.source);grew=true;}}
+    const state=(id:string)=>run.states[id]?.status||"idle",own=run.graph.nodes.filter(n=>leads.has(n.id)&&n.kind!=="reference");
+    if(own.some(n=>["running","blocked","failed"].includes(state(n.id))))return;
+    const review=own.find(n=>state(n.id)==="waiting_review");
+    if(review){if(review.id===plan.id)return;await actWorkflowRun(runId,{action:"review",node_id:review.id,document_revision:run.states[review.id].output_revision,expected_revision:run.revision},owner);continue;}
+    const quoted=own.find(n=>state(n.id)==="waiting_approval");
+    if(quoted){const actual=await db.get<SpendQuote&{payload:{billing?:string}}>("spend_quotes",run.states[quoted.id].quote!.id);try{assertAutomaticQuote(actual);}catch{return;}
+      await actWorkflowRun(runId,{action:"approve",node_id:quoted.id,quote_id:actual.id,expected_revision:run.revision},owner);continue;}
+    const next=readyWorkflowNodes(run.graph,run.states).find(n=>leads.has(n.id));if(!next)return;
+    await actWorkflowRun(runId,{action:"prepare",node_id:next.id,expected_revision:run.revision},owner);
+  }
 }

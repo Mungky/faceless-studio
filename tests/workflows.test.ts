@@ -44,6 +44,7 @@ async function fixture(t:TestContext) {
   });
   mock.method(db,"create",async(name:string,body:any)=>{const value={...structuredClone(body),id:String(++sequence).padStart(15,"0"),created:new Date().toISOString(),updated:new Date().toISOString()};table(name).set(value.id,value);return structuredClone(value);});
   mock.method(db,"update",async(name:string,id:string,body:any)=>{const old=table(name).get(id);assert.ok(old,`${name}/${id} exists`);const value={...old,...structuredClone(body),updated:new Date().toISOString()};table(name).set(id,value);return structuredClone(value);});
+  mock.method(db,"delete",async(name:string,id:string)=>{table(name).delete(id);});
   mock.method(db,"custom",async()=>{calls++;throw new Error("No provider reservations allowed in this fixture");});
   t.after(async()=>{mock.restoreAll();for(const [key,value] of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}await rm(directory,{recursive:true,force:true});});
   const api=await import("../apps/web/src/server/workflows").catch(()=>({} as any));
@@ -104,7 +105,8 @@ test("template override keeps the selected destination channel",async t=>{
 test("workflow GET is read-only and library never imports legacy episodes as runs",async t=>{
   const f=await fixture(t);assert.equal(typeof f.api.workflowLibrary,"function","Workflow server exists");
   f.table("episodes").set("legacy000000001",{youtube_video_id:"abcdefghijk"});
-  const library=await f.api.workflowLibrary();assert.equal(library.templates.length,2);assert.deepEqual(library.runs,[]);assert.equal(f.table("workflow_templates").size,0);assert.equal(f.table("episodes").size,1);
+  // Only Arthur's project exists in the fixture; a built-in recipe without its project is not listed.
+  const library=await f.api.workflowLibrary();assert.deepEqual(library.templates.map((t:{id:string})=>t.id),["arthur"]);assert.deepEqual(library.runs,[]);assert.equal(f.table("workflow_templates").size,0);assert.equal(f.table("episodes").size,1);
 });
 test("template versions conflict and running graphs retain saved snapshots",async t=>{
   const f=await fixture(t);assert.equal(typeof f.api.createWorkflowRun,"function");
@@ -285,10 +287,10 @@ test("workflow-bound quotes cannot be approved through the generic quote service
   await assert.rejects(approveQuote(prepared.run.states.research.quote!.id,owner),/workflow|conversation/i);assert.equal(f.calls,0);
 });
 
-test("workflow graphs reject repeated canonical output stages",async()=>{
+test("workflow graphs allow repeated stages with their own node ids",async()=>{
   const api=await core(),graph=api.defaultWorkflowGraph(),last=graph.nodes.at(-1)!;
   graph.nodes.push({...graph.nodes.find((node:any)=>node.kind==="script"),id:"secondScript"});graph.edges.push({id:"to-second-script",source:last.id,target:"secondScript"});
-  assert.throws(()=>api.validateWorkflowGraph(graph),/one|unique|repeat|already/i);
+  assert.equal(api.validateWorkflowGraph(graph).nodes.filter((node:any)=>node.kind==="script").length,2);
 });
 
 test("edits made during workflow generation survive and the generated result is recoverable",async t=>{
@@ -342,4 +344,64 @@ test("manual visual-plan sync rejects a valid table that omits approved narratio
   await writeBeats(detail.episode.vault_path,[{index:1,text:"The clock stopped.",prompt:"A clock",seconds:5,image:"",video:""}]);
   record.data.states.brief={status:"completed"};record.data.states.research={status:"completed"};record.data.states.script={status:"completed"};record.data.states.storyboard={status:"waiting_review",document:"storyboard.md",output:"Previous full plan",output_revision:documentRevision("Previous full plan")};
   await assert.rejects(f.api.actWorkflowRun(run.id,{action:"sync",node_id:"storyboard",expected_revision:run.revision},owner),/narration|script|cover|voiceover/i);assert.equal(f.calls,0);
+});
+
+test("references are inputs: they only feed stages and never block readiness",async()=>{
+  const api=await core(),graph=api.defaultWorkflowGraph();
+  graph.nodes.push({id:"ref",kind:"reference",title:"Video acuan",instructions:"",position:{x:0,y:-200},review:false,reference:{type:"video",name:"acuan",url:"https://youtu.be/dQw4w9WgXcQ",content:""}});
+  graph.edges.push({id:"ref-research",source:"ref",target:"research"});
+  assert.doesNotThrow(()=>api.validateWorkflowGraph(graph));
+  assert.deepEqual(api.readyWorkflowNodes(graph,{brief:{status:"completed"}}).map((n:any)=>n.kind),["research"]);
+  const into=structuredClone(graph);into.edges.push({id:"into-ref",source:"brief",target:"ref"});assert.throws(()=>api.validateWorkflowGraph(into),/input/i);
+  const loose=structuredClone(graph);loose.edges=loose.edges.filter((e:any)=>e.source!=="ref");assert.throws(()=>api.validateWorkflowGraph(loose),/reference/i);
+  const custom=structuredClone(graph);for(const id of ["c1","c2"]){custom.nodes.push({id,kind:"custom",title:id,instructions:"x",position:{x:900,y:0},review:true});custom.edges.push({id:"to-"+id,source:"script",target:id});}
+  assert.doesNotThrow(()=>api.validateWorkflowGraph(custom));
+});
+test("workflow edits wait as a draft while a task is open and apply once it closes",async t=>{
+  const f=await fixture(t);const builtin=await f.api.workflowTemplate("arthur");
+  const created=await f.api.createWorkflowRun({template:"arthur",title:"Open task",brief:"An honest brief"},owner);
+  const input={...builtin,expected_version:builtin.version};input.graph.nodes[1].instructions="Draft direction";
+  const drafted=await f.api.saveWorkflowTemplate("arthur",input);
+  assert.equal(drafted.draft.graph.nodes[1].instructions,"Draft direction");assert.notEqual(drafted.graph.nodes[1].instructions,"Draft direction");
+  await f.api.closeWorkflowRun(created.run.id,{closed:true,expected_revision:created.run.revision});
+  const applied=await f.api.workflowTemplate("arthur");
+  assert.equal(applied.graph.nodes[1].instructions,"Draft direction");assert.equal(applied.draft,null);assert.equal(applied.history.length,1);
+  const run=await f.api.workflowRunData(created.run.id);assert.notEqual(run.run.graph.nodes[1].instructions,"Draft direction");assert.equal(run.run.closed,true);
+});
+test("applying now skips the wait but keeps open tasks on their own snapshot",async t=>{
+  const f=await fixture(t);const builtin=await f.api.workflowTemplate("arthur");
+  const created=await f.api.createWorkflowRun({template:"arthur",title:"Open task",brief:"An honest brief"},owner);
+  const input={...builtin,expected_version:builtin.version,apply_now:true};input.graph.nodes[1].instructions="Now";
+  const saved=await f.api.saveWorkflowTemplate("arthur",input);assert.equal(saved.graph.nodes[1].instructions,"Now");assert.ok(!saved.draft);
+  const run=await f.api.workflowRunData(created.run.id);assert.notEqual(run.run.graph.nodes[1].instructions,"Now");
+});
+test("advancing a task moves through ready stages and stops at the first one that needs the owner",async t=>{
+  const f=await fixture(t);
+  const created=await f.api.createWorkflowRun({template:"arthur",title:"Auto",brief:"An honest brief"},owner);
+  const started=await f.api.advanceWorkflowRun(created.run.id,{},owner);assert.equal(started.advancing,true);
+  let current=await f.api.workflowRunData(created.run.id);for(let i=0;i<50&&current.advancing;i++){await new Promise(r=>setTimeout(r,20));current=await f.api.workflowRunData(created.run.id);}
+  assert.equal(current.advancing,false);
+  assert.equal(current.run.states.brief.status,"completed");
+  // No model provider exists in this fixture, so research stops honestly instead of being skipped.
+  assert.equal(current.run.states.research.status,"blocked");assert.equal(current.run.states.script?.status,"idle");assert.equal(f.calls,0);
+});
+test("archiving a task keeps it but no longer holds a workflow draft back",async t=>{
+  const f=await fixture(t);const builtin=await f.api.workflowTemplate("arthur");
+  const created=await f.api.createWorkflowRun({template:"arthur",title:"Archive me",brief:"An honest brief"},owner);
+  const input={...builtin,expected_version:builtin.version};input.graph.nodes[1].instructions="After archive";
+  assert.ok((await f.api.saveWorkflowTemplate("arthur",input)).draft);
+  await f.api.archiveWorkflowRun(created.run.id,{archived:true,expected_revision:created.run.revision});
+  assert.equal((await f.api.workflowTemplate("arthur")).graph.nodes[1].instructions,"After archive");
+  const kept=await f.api.workflowRunData(created.run.id);assert.equal(kept.run.archived,true);assert.equal(kept.detail.episode.title,"Archive me");
+});
+test("stopping a task halts advancing and deleting a task removes it and applies any pending draft",async t=>{
+  const f=await fixture(t);const builtin=await f.api.workflowTemplate("arthur");
+  const created=await f.api.createWorkflowRun({template:"arthur",title:"Task to delete",brief:"Brief"},owner);
+  const input={...builtin,expected_version:builtin.version};input.graph.nodes[1].instructions="Pending draft";
+  assert.ok((await f.api.saveWorkflowTemplate("arthur",input)).draft);
+  const stopped=await f.api.stopWorkflowRun(created.run.id);assert.equal(stopped.advancing,false);
+  const deleted=await f.api.deleteWorkflowRun(created.run.id);assert.equal(deleted.deleted,created.run.id);
+  assert.equal((await f.api.workflowTemplate("arthur")).graph.nodes[1].instructions,"Pending draft");
+  assert.equal(f.table("workflow_runs").has(created.run.id),false);
+  assert.equal(f.table("episodes").has(created.run.episode),false);
 });

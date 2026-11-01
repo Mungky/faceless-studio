@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdir, copyFile, realpath } from "node:fs/promises";
+import { mkdir, copyFile, realpath, readdir, readFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { type Job, type Worker, type Beat, type Asset, type CompositionSource, recordId } from "@studio/core";
 import { DriveConnector, ACEStepConnector, FlowConnector, run, requireCappedFlow } from "@studio/connectors";
@@ -10,7 +10,7 @@ const server = (process.env.WORKER_SERVER_URL || "http://127.0.0.1:3100").replac
 const token = process.env.WORKER_TOKEN;
 if (!token) throw new Error("Set WORKER_TOKEN before starting the worker.");
 const cacheRoot = path.resolve(process.env.WORKER_CACHE_ROOT || "D:/StudioCache");
-const baseCapabilities = (process.env.WORKER_CAPABILITIES || "render,music,ffmpeg,image,video").split(",").filter(type => ["render", "music", "ffmpeg", "image", "video"].includes(type));
+const baseCapabilities = (process.env.WORKER_CAPABILITIES || "render,music,ffmpeg,image,video").split(",").filter(type => ["render", "music", "ffmpeg", "image", "video", "analyze"].includes(type));
 let capabilities = baseCapabilities.filter(type => !["image", "video"].includes(type));
 let worker: Worker | undefined, active: { job: Job; controller: AbortController; log: string; progress: number } | undefined, stopped = false;
 const drive = new DriveConnector(), flow = new FlowConnector();
@@ -19,7 +19,7 @@ async function api<T>(route: string, payload?: unknown): Promise<T> {
   const data = await response.json(); if (!response.ok) throw new Error(data.error || `Server returned ${response.status}`); return data as T;
 }
 async function heartbeat() {
-  worker = await api<Worker>("heartbeat", { worker_key: process.env.WORKER_ID || os.hostname().replace(/[^a-zA-Z0-9_-]/g, "-"), hostname: os.hostname(), capabilities: process.env.RCLONE_REMOTE ? capabilities : [], gpu: process.env.WORKER_GPU || "" });
+  worker = await api<Worker>("heartbeat", { worker_key: process.env.WORKER_ID || os.hostname().replace(/[^a-zA-Z0-9_-]/g, "-"), hostname: os.hostname(), capabilities: process.env.RCLONE_REMOTE ? capabilities : capabilities.filter(type => type === "analyze"), gpu: process.env.WORKER_GPU || "" });
   if (active) {
     const remote = await api<Job & { cancel_requested: boolean }>(`jobs/${active.job.id}`);
     if (remote.cancel_requested || remote.status !== "running" || remote.worker_id !== worker.id) active.controller.abort(new Error("Job cancelled or worker lease lost"));
@@ -41,6 +41,7 @@ async function execute(job: Job) {
   const state = active; const log = (value: string) => { state.log = (state.log + value).slice(-90_000); console.log(value.trim()); };
   const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(7_200_000)]);
   try {
+    if (job.type === "analyze") { await analyze(job, directory, signal, log); console.log(`Analyzed ${job.id}.`); return; }
     const payload = job.payload; const driveBase = String(payload.drive_base || "");
     if(payload.composition)await api("jobs/"+job.id+"/validate",{worker_id:worker!.id});
     if (!driveBase.startsWith("Faceless/") || driveBase.includes("..")) throw new Error("Invalid episode Drive folder");
@@ -101,6 +102,29 @@ async function execute(job: Job) {
     const message = (error as Error).message; console.error(`Job ${job.id}: ${message}`);
     try { await api("complete", { worker_id: worker!.id, job_id: job.id, error: message + `\nRecovery cache retained: ${directory}` }); } catch (reportError) { console.error(`Could not report completion: ${(reportError as Error).message}. No job was resubmitted.`); }
   } finally { active = undefined; }
+}
+
+// For You deep analysis: yt-dlp download, ffmpeg frames, optional Whisper transcript.
+// Scoring happens on the server; failures are reported there so the analysis never stays queued.
+async function analyze(job: Job, directory: string, signal: AbortSignal, log: (value: string) => void) {
+  const analysis_id = String(job.payload.analysis_id || ""), url = String(job.payload.url || "");
+  try {
+    if (!/^https?:\/\//.test(url)) throw new Error("Invalid analysis URL");
+    const ffmpeg = process.env.FFMPEG_BIN || "ffmpeg", source = path.join(directory, "video.mp4");
+    log("Downloading video with yt-dlp.\n");
+    try { await run(process.env.YTDLP_BIN || "yt-dlp", ["--no-playlist", "--max-filesize", "300M", "-f", "mp4/best[height<=720]/best", "--merge-output-format", "mp4", "-o", source, url], { signal, onLog: log }); }
+    catch (error) { throw new Error("yt-dlp gagal atau belum terpasang di PC (atur YTDLP_BIN). " + (error as Error).message.slice(0, 300)); }
+    await run(ffmpeg, ["-y", "-i", source, "-vf", "fps=1/2,scale=512:-2", "-frames:v", "12", "-q:v", "5", path.join(directory, "frame-%02d.jpg")], { signal, onLog: log });
+    const frames = (await readdir(directory)).filter(name => /^frame-\d+\.jpg$/.test(name)).sort();
+    let transcript = "";
+    if (process.env.WHISPER_BIN) {
+      log("Transcribing audio.\n"); const wav = path.join(directory, "audio.wav");
+      await run(ffmpeg, ["-y", "-i", source, "-vn", "-ac", "1", "-ar", "16000", wav], { signal, onLog: log });
+      await run(process.env.WHISPER_BIN, [wav, "--model", process.env.WHISPER_MODEL || "small", "--output_format", "txt", "--output_dir", directory], { signal, onLog: log });
+      transcript = (await readFile(path.join(directory, "audio.txt"), "utf8").catch(() => "")).slice(0, 60_000);
+    }
+    await api("analysis", { worker_id: worker!.id, job_id: job.id, analysis_id, transcript, frames: await Promise.all(frames.map(async name => (await readFile(path.join(directory, name))).toString("base64"))) });
+  } catch (error) { await api("analysis", { worker_id: worker!.id, job_id: job.id, analysis_id, error: (error as Error).message }); }
 }
 
 let lastHeartbeat = 0;

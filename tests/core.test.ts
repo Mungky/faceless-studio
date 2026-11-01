@@ -37,3 +37,8 @@ test("YouTube metadata and supplementary Studio CSV use the selected video", () 
 test("the render template cannot interpolate active HTML from script text", () => {
   assert.equal(escapeHtml('<script src="bad">&'), "&lt;script src=&quot;bad&quot;&gt;&amp;");
 });
+test("model JSON survives surrounding prose and trailing notes", () => {
+  assert.deepEqual(parseJsonOutput('{"script":"a } b","hook_score":80}\n\nCatatan: hook bisa diganti.'), { script: "a } b", hook_score: 80 });
+  assert.deepEqual(parseJsonOutput('Berikut hasilnya:\n```json\n{"beats":[{"index":1}]}\n```\nSemoga membantu.'), { beats: [{ index: 1 }] });
+  assert.throws(() => parseJsonOutput("tidak ada json di sini"));
+});

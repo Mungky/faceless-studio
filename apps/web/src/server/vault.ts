@@ -41,6 +41,14 @@ export async function writeDocument(folder: string, name: DocumentName, content:
   const temporary = target + "." + randomUUID() + ".tmp";
   await writeFile(temporary, content, { flag: "wx" }); await rename(temporary, target);
 }
+// Custom workflow stages keep their own Markdown result per node, beside the canonical documents.
+const nodeFile=(folder:string,node:string)=>`${folder}/nodes/${z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/).parse(node)}.md`;
+export async function readNodeOutput(folder:string,node:string){try{return await readFile(await safeVaultPath(nodeFile(folder,node),true),"utf8");}catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return "";throw error;}}
+export async function writeNodeOutput(folder:string,node:string,content:string){
+  if(Buffer.byteLength(content)>1_000_000)throw new Error("Document exceeds 1 MB");
+  const target=await safeVaultPath(nodeFile(folder,node),true);await mkdir(path.dirname(target),{recursive:true});await safeVaultPath(folder);
+  const temporary=target+"."+randomUUID()+".tmp";await writeFile(temporary,content,{flag:"wx"});await rename(temporary,target);
+}
 export async function readPlaybook(relative: string) { return readFile(await safeVaultPath(relative), "utf8"); }
 export async function documentHistory(folder:string,name:DocumentName){
   const root=await safeVaultPath(folder+"/.studio-history",true);let names:string[];try{names=await readdir(root);}catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return [];throw error;}

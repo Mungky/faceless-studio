@@ -23,9 +23,17 @@ not be deleted or reassigned automatically. More channels and platforms are futu
 Improve the formula for subsequent episodes from the owner's historical performance
 and available public competitor evidence. Channel cards lead to analytics, upload
 calendars, individual video reports, production, agent reports and channel settings.
-Studio is a card-based template library with explicit editing and an episode composer.
-FYP gathers competitor, similar-channel and niche references. There is no global Home
-or Settings destination. These approved 31 October requirements supersede the old Dify
+Studio is chat-based: the owner talks to a production agent that proposes templates,
+episodes and analyses (applied only on approval), with an editable workflow canvas and a
+Running tasks panel; the quick episode composer remains as a tab. A template's own graph
+decides which stages an episode shows. For You (formerly FYP) is workspace-wide: links and
+searches across YouTube, TikTok, Instagram, X and Threads, competitor accounts, and video
+analysis (hook, structure, visual, transitions, pacing, audio, caption, CTA) that can be
+sent to Studio to become a template and niche. Asset is a Google Flow-style library of
+generated and uploaded images, video, VO, music and SFX in free-form projects and groups;
+without Drive, media are kept in a local server folder. Pengaturan holds workspace-wide
+connections, models and spending. There is no global Home page.
+These approved 31 October requirements supersede the old Dify
 canvas and violet shell direction.
 
 ## Operating Context

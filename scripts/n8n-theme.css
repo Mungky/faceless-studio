@@ -1,0 +1,80 @@
+/* Studio skin for the n8n editor, injected by scripts/n8n-proxy.mjs.
+   Only fonts and colours change; n8n's layout and behaviour stay as they are.
+   n8n's own stylesheets load after this one, so every token is doubled in specificity and marked
+   !important. n8n 2.x derives its accent from --color--primary--h/s/l; older tokens are covered too. */
+html:root, html:root body, html:root body[data-theme="dark"] {
+  --studio-accent: #d1fe17 !important;
+  --studio-bg: #0a0a0a !important;
+  --studio-surface: #141414 !important;
+  --studio-raised: #1c1c1c !important;
+  --studio-line: #262626 !important;
+  --studio-text: #f4f4f2 !important;
+  --studio-muted: #a3a3a0 !important;
+
+  /* Lime #d1fe17 as n8n's primary and secondary hue */
+  --color--primary--h: 72 !important;
+  --color--primary--s: 99% !important;
+  --color--primary--l: 54% !important;
+  --color--secondary--h: 72 !important;
+  --color--secondary--s: 99% !important;
+  --color--secondary--l: 54% !important;
+
+  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+  --font-family-monospace: "Cascadia Code", Consolas, monospace !important;
+
+  --color-primary: #d1fe17 !important;
+  --color--primary: #d1fe17 !important;
+  --color--primary--shade-1: #b9e40f !important;
+  --color--primary--tint-1: #dcff4f !important;
+  --color--primary--tint-2: rgba(209, 254, 23, .28) !important;
+  --color--primary--tint-3: rgba(209, 254, 23, .14) !important;
+  --color-primary-shade-1: #b9e40f !important;
+  --color-primary-tint-1: #dcff4f !important;
+  --color-primary-tint-2: rgba(209, 254, 23, .28) !important;
+  --color-primary-tint-3: rgba(209, 254, 23, .14) !important;
+
+  --color-background-xlight: #141414 !important;
+  --color-background-light: #1c1c1c !important;
+  --color-background-base: #0a0a0a !important;
+  --color-background-dark: #050505 !important;
+  --color-canvas-background: #0a0a0a !important;
+  --color-canvas-dot: #2a2a2a !important;
+  --color-foreground-base: #262626 !important;
+  --color-foreground-light: #1f1f1f !important;
+  --color-foreground-xlight: #171717 !important;
+  --color-text-dark: #f4f4f2 !important;
+  --color-text-base: #d8d8d4 !important;
+  --color-text-light: #a3a3a0 !important;
+
+  --color-button-primary-font: #0a0a0a !important;
+  --color-button-primary-background: #d1fe17 !important;
+  --color-button-primary-hover-background: #e0ff5c !important;
+  --button--color--text--primary: #0a0a0a !important;
+  --button--color--background--primary: #d1fe17 !important;
+  --button--border-color--primary: #d1fe17 !important;
+  --button--color--background--primary--hover-active-focus: #e0ff5c !important;
+  --button--border-color--primary--hover-active-focus: #e0ff5c !important;
+  --button--outline-color--primary--focus: rgba(209, 254, 23, .35) !important;
+}
+
+html, body, #app, button, input, textarea, select {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+}
+html body { background: #0a0a0a !important; }
+
+/* Solid (primary) buttons read like Studio's lime pills. */
+html body .button[class*="_solid_"] {
+  --button--color--background: #d1fe17 !important;
+  --button--color--background--hover: #e0ff5c !important;
+  --button--color--background--active: #c4f00e !important;
+  --button--color--background--focus: #e0ff5c !important;
+  --button--color--text: #0a0a0a !important;
+  --button--color--text--hover: #0a0a0a !important;
+  --button--color--text--active: #0a0a0a !important;
+  --button--color--text--focus: #0a0a0a !important;
+  --button--border-color: #d1fe17 !important;
+  --button--radius: 999px !important;
+  font-weight: 700 !important;
+}
+
+::selection { background: #d1fe17; color: #0a0a0a; }

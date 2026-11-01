@@ -1,0 +1,66 @@
+/* Faceless Studio Theme for DeepSeek Harness Web GUI */
+:root, [data-theme='dark'], body {
+  /* Brand accents - Faceless Studio Neon Lime */
+  --dsw-alias-brand-primary: #d1fe17 !important;
+  --dsw-alias-brand-primary-invert: #000000 !important;
+  --dsw-alias-brand-text: #d1fe17 !important;
+  --dsw-alias-link: #d1fe17 !important;
+  
+  /* Faceless Studio Surfaces */
+  --dsw-alias-bg-base: #0a0a0a !important;
+  --dsw-alias-bg-layer-1: #121212 !important;
+  --dsw-alias-bg-layer-2: #181818 !important;
+  --dsw-alias-bg-overlay: #151515 !important;
+  
+  /* Subtle dark borders */
+  --dsw-alias-border-l1: #262626 !important;
+  --dsw-alias-border-l2: #333333 !important;
+  
+  /* Typography */
+  --dsw-alias-label-primary: #ededed !important;
+  --dsw-alias-label-secondary: #888888 !important;
+  --dsw-alias-label-tertiary: #555555 !important;
+  
+  /* Chat bubbles & containers */
+  --dsw-specific-sidebar-fill: #0e0e0e !important;
+  --dsw-specific-bubble: #141414 !important;
+  --dsw-specific-bubble-highlight: #1c1c1c !important;
+  
+  /* Buttons */
+  --dsw-alias-button-primary-fill: #d1fe17 !important;
+  --dsw-alias-button-primary-hover: #b5dd12 !important;
+  
+  /* Code blocks & diffs */
+  --dsw-alias-markdown-code-block: #121212 !important;
+  --dsw-alias-markdown-code-block-banner: #181818 !important;
+}
+
+html, body {
+  background-color: #0a0a0a !important;
+  color: #ededed !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+  margin: 0;
+  padding: 0;
+}
+
+/* Accent highlights & selection */
+::selection {
+  background: rgba(209, 254, 23, 0.25) !important;
+  color: #ffffff !important;
+}
+
+/* Sleek studio scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #262626;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #383838;
+}

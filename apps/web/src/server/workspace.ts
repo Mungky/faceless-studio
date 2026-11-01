@@ -1,7 +1,7 @@
 import {routerConnector,browserConnector,searchConnector,serviceUrl} from "./provider-credentials";
 import "server-only";
 import {randomUUID} from "node:crypto";
-import {z,recordId,videoId,validateReportRange,channelPreferencesSchema,defaultChannelPreferences,resolveEpisodeTemplate,evaluateEvidence,parseJsonOutput,type AnalyticsMetrics,type AgentEvidence,type ChannelPreferences,type WorkspaceRecord,type Channel,type ReferenceVideo,type Competitor,type AgentReport,type TemplateProposal,type ModelRoute,type ScheduledTask} from "@studio/core";
+import {z,recordId,videoId,resolveProductionEntry,validateReportRange,channelPreferencesSchema,defaultChannelPreferences,resolveEpisodeTemplate,evaluateEvidence,parseJsonOutput,type AnalyticsMetrics,type AgentEvidence,type ChannelPreferences,type WorkspaceRecord,type Channel,type ReferenceVideo,type Competitor,type AgentReport,type TemplateProposal,type ModelRoute,type ScheduledTask} from "@studio/core";
 import {SearchConnector,ObscuraConnector,publicSourceUrl,NineRouterConnector} from "@studio/connectors";
 import {db,filterValue,DatabaseError} from "./pocketbase";
 import {workflowLibrary,createWorkflowRun,workflowTemplate,saveWorkflowTemplate} from "./workflows";
@@ -22,9 +22,10 @@ export async function workspaceData(){
   return {...library,preferences:records.filter(r=>r.kind==="preferences").map(r=>r.data as ChannelPreferences),connections:{searxng:!!await serviceUrl("searxng"),obscura:!!await serviceUrl("obscura")},reports:records.filter(r=>r.kind==="report").map(r=>r.data as AgentReport),proposals:records.filter(r=>r.kind==="proposal").map(r=>r.data as TemplateProposal),tasks:records.filter(r=>r.kind==="task").map(r=>r.data)};
 }
 export async function createProduction(input:unknown,owner:string){
-  const parsed=z.object({channel:recordId,template:z.string().optional(),title:z.string().min(1).max(200),entry_mode:z.enum(["research","idea","script"]),content:z.string().min(1).max(100_000),request_key:z.string().max(220).optional()}).strict().parse(input);
+  const parsed=z.object({channel:recordId,template:z.string().optional(),title:z.string().max(200).optional(),entry_mode:z.enum(["research","idea","script"]),content:z.string().max(100_000).optional(),at:z.string().optional(),request_key:z.string().max(220).optional(),model:z.string().trim().max(150).optional()}).strict().parse(input);
   const [preferences,library]=await Promise.all([channelPreferences(parsed.channel),workflowLibrary()]);const template=resolveEpisodeTemplate(parsed.channel,preferences,library.templates,parsed.template);
-  return createWorkflowRun({template:template.id,channel:parsed.channel,title:parsed.title,brief:parsed.content.slice(0,30_000),entry_mode:parsed.entry_mode,content:parsed.content,render_mode:"composition",request_key:parsed.request_key},owner);
+  const entry=resolveProductionEntry(parsed,preferences,parsed.at?new Date(parsed.at):new Date());
+  return createWorkflowRun({template:template.id,channel:parsed.channel,title:entry.title.slice(0,200),brief:entry.content.slice(0,30_000),entry_mode:parsed.entry_mode,content:entry.content,render_mode:"composition",request_key:parsed.request_key,...(parsed.model?{model:parsed.model}:{})},owner);
 }
 export async function discoveryData(channel:string){await channelPreferences(channel);const [competitors,references]=await Promise.all([workspaceRows<Competitor>(channel,"competitor"),workspaceRows<ReferenceVideo>(channel,"reference")]);return {competitors:competitors.map(r=>r.data),references:references.map(r=>r.data)};}
 export async function addCompetitor(channel:string,input:unknown){
