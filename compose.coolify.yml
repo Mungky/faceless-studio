@@ -84,8 +84,9 @@ services:
       N8N_URL: ${N8N_URL:?Set N8N_URL (http://...)}
       N8N_PROXY_HOST: 0.0.0.0
       N8N_PROXY_PORT: "5679"
-    expose:
-      - "5679"
+    # Reachable only from this server; `tailscale serve --https=5679` publishes it over https to the tailnet.
+    ports:
+      - "127.0.0.1:5679:5679"
 volumes:
   pb_data:
   web_cache:
