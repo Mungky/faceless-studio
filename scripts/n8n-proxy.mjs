@@ -72,4 +72,5 @@ server.on("upgrade",(req,socket,head)=>{
 
 server.on("clientError",(_error,socket)=>socket.destroy());
 process.on("uncaughtException",error=>console.error("proxy error (kept running):",error.message));
-server.listen(port,"127.0.0.1",()=>console.log(`n8n editor for Studio: http://127.0.0.1:${port} -> ${targetUrl.origin}`));
+const bind=process.env.N8N_PROXY_HOST||env.N8N_PROXY_HOST||"127.0.0.1"; // set 0.0.0.0 on a server so browsers can reach it
+server.listen(port,bind,()=>console.log(`n8n editor for Studio: http://${bind}:${port} -> ${targetUrl.origin}`));
