@@ -4,7 +4,7 @@ import type {ChatMessage} from "@studio/connectors";
 import {routerConnector} from "./provider-credentials";
 import {episodeDetails} from "./service";
 import {chatModel} from "./studio-chat";
-import {workflowRunData,advanceWorkflowRun,actWorkflowRun,appendRunMessage,thinking} from "./workflows";
+import {workflowRunData,advanceWorkflowRun,actWorkflowRun,appendRunMessage,thinking,stopEpoch} from "./workflows";
 
 // Each task is its own conversation with an agent, like a session in a chat harness. The agent
 // runs the task's stages, reads what stopped them, retries once on its own, and asks the owner
@@ -21,12 +21,12 @@ function snapshot(run:WorkflowRun,documents:Record<string,string>){
 }
 
 export async function taskAgentTurn(id:string,owner:string,trigger:Trigger){
-  if(thinking.has(id))return;thinking.add(id);
+  if(thinking.has(id))return;thinking.add(id);const alive=stopEpoch(id);
   try{
     const {run}=await workflowRunData(id) as {run:WorkflowRun};const detail=await episodeDetails(run.episode);
     const references=run.graph.nodes.filter(n=>n.kind==="reference").map(n=>`- ${n.reference?.name||n.title}: ${n.reference?.url||""} ${n.reference?.content?.slice(0,300)||""}`).join("\n");
     const autoRetried=new Set(run.messages.filter(m=>m.role==="system"&&m.content.startsWith("Agent mengulang")).map(m=>m.node_id));
-    const system=`Kamu agent produksi untuk satu task (satu video) di Faceless Studio. Judul: "${detail.episode.title}". Brief: ${run.brief.slice(0,1500)}
+    const system=`Kamu agent produksi untuk satu task (satu video) di Restard Studio. Judul: "${detail.episode.title}". Brief: ${run.brief.slice(0,1500)}
 Instruksi workflow: ${run.instructions.slice(0,1500)}
 ${references?"Referensi:\n"+references:""}
 Tahap task sekarang:
@@ -44,17 +44,21 @@ ${trigger==="stopped"?`Task baru saja berhenti sendiri. Laporkan singkat apa yan
     if(history.length===1||history.at(-1)!.role!=="user")history.push({role:"user",content:trigger==="stopped"?"(Task berhenti. Laporkan statusnya.)":"(Lanjutkan.)"});
     const route=await chatModel();
     const result=await (await routerConnector()).chat(route.model,history,Math.min(route.max_output_tokens||4000,6000));
+    // The owner pressed Stop while the model was answering: drop the reply and do nothing.
+    if(!alive())return;
     let parsed:z.infer<typeof replySchema>;try{parsed=replySchema.parse(parseJsonOutput(result.text));}catch{parsed={reply:result.text,actions:[]};}
     if(parsed.reply.trim())await appendRunMessage(id,"assistant",parsed.reply);
     for(const action of parsed.actions)await perform(id,owner,action,trigger,autoRetried);
-  }catch(error){await appendRunMessage(id,"system","Agent belum bisa menjawab: "+(error as Error).message).catch(()=>undefined);}
-  finally{thinking.delete(id);}
+  }catch(error){if(alive())await appendRunMessage(id,"system","Agent belum bisa menjawab: "+(error as Error).message).catch(()=>undefined);}
+  finally{if(alive())thinking.delete(id);}
 }
 
 async function perform(id:string,owner:string,action:z.infer<typeof actionSchema>,trigger:Trigger,autoRetried:Set<string|undefined>){
   const {run}=await workflowRunData(id) as {run:WorkflowRun};const node=run.graph.nodes.find(n=>n.id===action.node_id);
   const report=()=>taskAgentTurn(id,owner,"stopped");
-  if(action.type==="run"){await advanceWorkflowRun(id,node?{node_id:node.id}:{},owner,report);return;}
+  // Running a stopped stage again means resetting it first; preparing it as-is would be refused.
+  if(action.type==="run"&&node&&["blocked","failed"].includes(run.states[node.id]?.status||""))action={...action,type:"revise"};
+  else if(action.type==="run"){await advanceWorkflowRun(id,node?{node_id:node.id}:{},owner,report);return;}
   if(!node)return;
   if(action.type==="note"&&action.direction){await appendRunMessage(id,"user",action.direction,node.id);return;}
   if(action.type==="approve"&&trigger==="user"&&run.states[node.id]?.status==="waiting_review"){

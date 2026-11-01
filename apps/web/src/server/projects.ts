@@ -1,7 +1,12 @@
 import "server-only";
-import { recordId, videoId as youtubeVideoId, reportRange, validateReportRange, type Channel, type ChannelReport, type ChannelVideo, type ProjectData, type VideoAnalyticsData, type AnalyticsMetrics, type Snapshot, type Episode } from "@studio/core";
+import { recordId, videoId as youtubeVideoId, reportRange, validateReportRange, type Channel, type ChannelReport, type ChannelVideo, type ProjectData, type VideoAnalyticsData, type AnalyticsMetrics, type Snapshot, type Episode, type Asset } from "@studio/core";
 import { db, filterValue } from "./pocketbase";
 import { youtubeFor } from "./service";
+import { DriveConnector, type DriveFile } from "@studio/connectors";
+import { channelPreferences } from "./workspace";
+import { ensureProjectWorkspace } from "./project-workspace";
+import path from "node:path";
+import { existsSync } from "node:fs";
 
 interface ReportCache { id: string; report: ChannelReport; }
 interface CatalogCache { id: string; videos: ChannelVideo[]; catalog: ProjectData["catalog"]; }
@@ -19,6 +24,7 @@ async function serialize<T>(channel: string, action: () => Promise<T>): Promise<
 export async function projectData(id: string, start: string, end: string): Promise<ProjectData> {
   recordId.parse(id); validateReportRange(start, end);
   const channel = await db.get<Channel>("channels", id);
+  await ensureProjectWorkspace(channel).catch(() => undefined);
   const [[report], [catalog]] = await Promise.all([
     db.list<ReportCache>("channel_reports", rangeScope(channel, start, end), "-updated", 1),
     db.list<CatalogCache>("channel_catalogs", scope(channel), "-updated", 1)
@@ -111,4 +117,112 @@ export async function syncVideoAnalytics(id:string,videoId:string,start:string,e
     }
     return {channel:identity(channel),video,report,metrics,snapshot};
   });
+}
+
+// Scans Google Drive and local project directories for media outputs
+export async function projectDriveOutputs(channelId: string) {
+  recordId.parse(channelId);
+  const channel = await db.get<Channel>("channels", channelId);
+  const prefs = await channelPreferences(channelId).catch(() => ({ project_name: "" }));
+  const name = (prefs.project_name || channel.name).trim();
+  const folder = `Faceless/${name}`;
+  const connector = new DriveConnector();
+
+  const [initialFiles, assets] = await Promise.all([
+    connector.listFiles(folder).catch(() => [] as DriveFile[]),
+    db.list<Asset>("assets", `project=${filterValue(name)} || project=${filterValue(channel.name)}`, "-created", 500).catch(() => [])
+  ]);
+  const files: DriveFile[] = [...initialFiles];
+
+  // Also discover files in local project directory (projects/<name>/assets or projects/<name>)
+  const localProjectDir = path.resolve(process.cwd(), "projects", name);
+  const localDirs = [path.join(localProjectDir, "assets"), localProjectDir];
+  const mediaExts = new Set([".mp4", ".webm", ".mkv", ".mov", ".mp3", ".wav", ".m4a", ".aac", ".flac", ".jpg", ".jpeg", ".png", ".webp"]);
+  const seenPaths = new Set(files.map(f => f.path.toLowerCase()));
+
+  for (const d of localDirs) {
+    if (existsSync(d)) {
+      try {
+        const { readdirSync, statSync } = await import("node:fs");
+        const dirEntries = readdirSync(d, { withFileTypes: true });
+        for (const e of dirEntries) {
+          if (e.isFile() && mediaExts.has(path.extname(e.name).toLowerCase())) {
+            const relPath = `${folder}/${e.name}`;
+            if (!seenPaths.has(relPath.toLowerCase())) {
+              seenPaths.add(relPath.toLowerCase());
+              const fullPath = path.join(d, e.name);
+              const sz = statSync(fullPath).size;
+              files.push({ id: `local:${relPath}`, path: relPath, size: sz });
+            }
+          }
+        }
+      } catch {}
+    }
+  }
+
+  return { project: name, folder, files, assets };
+}
+
+// Imports any newly found files from Google Drive / local into Studio's assets library.
+export async function syncProjectDriveOutputs(channelId: string) {
+  recordId.parse(channelId);
+  const channel = await db.get<Channel>("channels", channelId);
+  const prefs = await channelPreferences(channelId).catch(() => ({ project_name: "" }));
+  const name = (prefs.project_name || channel.name).trim();
+  const folder = `Faceless/${name}`;
+  const connector = new DriveConnector();
+  const initialFiles = await connector.listFiles(folder).catch(() => [] as DriveFile[]);
+  const files: DriveFile[] = [...initialFiles];
+
+  // Also include local project files
+  const localProjectDir = path.resolve(process.cwd(), "projects", name);
+  const localDirs = [path.join(localProjectDir, "assets"), localProjectDir];
+  const mediaExts = new Set([".mp4", ".webm", ".mkv", ".mov", ".mp3", ".wav", ".m4a", ".aac", ".flac", ".jpg", ".jpeg", ".png", ".webp"]);
+  const seenPaths = new Set(files.map(f => f.path.toLowerCase()));
+
+  for (const d of localDirs) {
+    if (existsSync(d)) {
+      try {
+        const { readdirSync, statSync } = await import("node:fs");
+        const dirEntries = readdirSync(d, { withFileTypes: true });
+        for (const e of dirEntries) {
+          if (e.isFile() && mediaExts.has(path.extname(e.name).toLowerCase())) {
+            const relPath = `${folder}/${e.name}`;
+            if (!seenPaths.has(relPath.toLowerCase())) {
+              seenPaths.add(relPath.toLowerCase());
+              const fullPath = path.join(d, e.name);
+              const sz = statSync(fullPath).size;
+              files.push({ id: `local:${relPath}`, path: relPath, size: sz });
+            }
+          }
+        }
+      } catch {}
+    }
+  }
+
+  const existing = await db.list<Asset>("assets", `project=${filterValue(name)} || project=${filterValue(channel.name)}`, "-created", 1000).catch(() => []);
+  const known = new Set(existing.map(a => a.drive_path));
+  let created = 0;
+  for (const f of files) {
+    if (known.has(f.path)) continue;
+    const ext = path.extname(f.path).toLowerCase();
+    const kind = [".mp4", ".webm", ".mkv", ".mov"].includes(ext) ? "render"
+      : [".mp3", ".wav", ".m4a", ".aac", ".flac"].includes(ext) ? "vo"
+      : [".jpg", ".jpeg", ".png", ".webp"].includes(ext) ? "image"
+      : "render";
+    const filename = path.basename(f.path);
+    await db.create<Asset>("assets", {
+      episode: "",
+      project: name,
+      title: filename.slice(0, 200),
+      kind,
+      drive_file_id: f.id,
+      drive_path: f.path,
+      source: "n8n",
+      selected: true,
+      meta: { filename, size: f.size }
+    });
+    created++;
+  }
+  return { project: name, synced: created, total: files.length };
 }

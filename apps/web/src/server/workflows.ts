@@ -7,6 +7,8 @@ import { episodeDetails, createEpisode, makeQuote, approveQuote, queueLocalJob, 
 import { readPlaybook, safeVaultPath, writeDocument, readNodeOutput } from "./vault";
 import { validateStoryboardCoverage, assertAutomaticQuote } from "@studio/core";
 import {SearchConnector,ObscuraConnector} from "@studio/connectors";
+import {channelPreferences} from "./workspace";
+import {n8nAction,n8nAdvance,stopN8nExecution} from "./n8n";
 
 type Detail = Awaited<ReturnType<typeof episodeDetails>>;
 type TemplateRecord = {id:string;key:string;data:WorkflowTemplate;created:string;updated:string};
@@ -39,9 +41,10 @@ function publicTemplate(record:TemplateRecord):WorkflowTemplate {
 async function builtinTemplates() {
   const channels=await db.list<Channel>("channels");
   const available=[...builtins,...channels.filter(c=>c.name.toLowerCase()==="briking nius").map(c=>({id:"briking-nius",name:c.name,channel:c.id,path:c.playbook_path||"Briking Nius/Briking Nius.md",description:"Komedi nyeleneh: ide atau naskah sendiri, review, storyboard dan produksi."}))];
-  return available.map(item=>{const channel=channels.find(c=>c.id===item.channel)||channels.find(c=>c.name.toLowerCase()===item.name.toLowerCase());
+  // A built-in recipe only exists while its project does; a deleted project takes it along.
+  return available.flatMap(item=>{const channel=channels.find(c=>c.id===item.channel)||channels.find(c=>c.name.toLowerCase()===item.name.toLowerCase());if(!channel)return [];
     const value:WorkflowTemplate={id:item.id,name:item.name,description:item.description,channel:channel?.id||item.channel,playbook_path:channel?.playbook_path||item.path,instructions:"Follow the existing playbook in full. Its content language and required approval pauses are authoritative. Never claim live research without verified source evidence. No automatic publishing.",graph:builtinGraph(),version:"builtin-v1",updated:"",builtin:true};
-    value.version="builtin-"+documentRevision(JSON.stringify(value)).slice(0,20);return value;});
+    value.version="builtin-"+documentRevision(JSON.stringify(value)).slice(0,20);return [value];});
 }
 export async function workflowLibrary() {
   const [defaults,overrides,records]=await Promise.all([builtinTemplates(),db.list<TemplateRecord>("workflow_templates"),db.list<RunRecord>("workflow_runs")]);
@@ -126,11 +129,26 @@ export async function closeWorkflowRun(id:string,input:unknown){
   if(parsed.closed)await applyDraftIfIdle(outcome.run.template_id);
   return outcome;
 }
+// Deletes a task completely: stops it if running, removes the workflow run and its episode.
+export async function deleteWorkflowRun(id:string){
+  recordId.parse(id);
+  // ponytail: stops running tasks and drops PB records; vault markdown left intact for safety.
+  await stopWorkflowRun(id).catch(()=>undefined);
+  const record=await db.get<RunRecord>("workflow_runs",id);
+  if(record.data.episode)await db.delete("episodes",record.data.episode).catch(()=>undefined);
+  await db.delete("workflow_runs",id);
+  if(record.data.template_id)await applyDraftIfIdle(record.data.template_id).catch(()=>undefined);
+  return {deleted:id};
+}
 function publicRun(record:RunRecord):WorkflowRun {
   return {...record.data,id:record.id,graph:validateWorkflowGraph(record.data.graph),created:record.created,updated:record.updated};
 }
 async function loadRun(id:string){recordId.parse(id);const record=await db.get<RunRecord>("workflow_runs",id);record.data=publicRun(record);record.meta=record.meta||{quotes:{}};record.meta.quotes=record.meta.quotes||{};return record;}
-function addMessage(run:WorkflowRun,role:WorkflowMessage["role"],content:string,node_id?:string){run.messages.push({id:randomUUID(),role,content,node_id,created_at:new Date().toISOString()});}
+export function addMessage(run:WorkflowRun,role:WorkflowMessage["role"],content:string,node_id?:string){run.messages.push({id:randomUUID(),role,content,node_id,created_at:new Date().toISOString()});}
+// A locked read-change-save of one task, for engines outside this file (n8n).
+export async function updateRun(id:string,change:(run:WorkflowRun,vault:string)=>Promise<void>|void){
+  return serialize("run:"+id,async()=>{const record=await loadRun(id);await change(record.data,record.meta.vault_path||"");return publicRun(await persist(record));});
+}
 function updateStatus(run:WorkflowRun) {
   const ready=new Set(readyWorkflowNodes(run.graph,run.states).map(n=>n.id));
   for(const node of run.graph.nodes){if(node.kind==="reference"){run.states[node.id]={status:"completed",output:node.reference?.content||node.reference?.url||node.title};continue;}const state=run.states[node.id]??={status:"idle"};if(["idle","ready"].includes(state.status))state.status=ready.has(node.id)?"ready":"idle";}
@@ -159,6 +177,8 @@ export async function createWorkflowRun(input:unknown,owner:string) {
   const episode=recovered||await createEpisode({channel:channel.id,title:parsed.title,format:"short",youtube_video_id:"",script_meta:{workflow_context:frozenContext}});
   await db.update("episodes",episode.id,{script_meta:{...episode.script_meta,workflow_context:frozenContext}});
   const run:WorkflowRun={id:"",request_key:parsed.request_key,template_id:frozenContext.template_id,template_name:frozenContext.template_name,template_version:frozenContext.template_version,playbook_snapshot:frozenContext.playbook_snapshot,channel:channel.id,episode:episode.id,graph:validateWorkflowGraph(frozenContext.graph),playbook_path:frozenContext.playbook_path,instructions:frozenContext.instructions,brief:frozenContext.creation_brief,status:"idle",states:{},messages:[],revision:0,created:"",updated:""};
+  // A project linked to an n8n workflow runs its tasks there; Studio keeps the chat and reviews.
+  const n8nWorkflow=(await channelPreferences(channel.id)).n8n_workflow_id;if(n8nWorkflow)run.n8n={workflow_id:n8nWorkflow};
   if(parsed.entry_mode!=="research"){
     const brief=run.graph.nodes.find(n=>n.kind==="brief")!,research=run.graph.nodes.find(n=>n.kind==="research");
     run.states[brief.id]={status:"completed",output:parsed.brief,output_revision:documentRevision(parsed.brief),provided_by_user:true};
@@ -348,6 +368,7 @@ async function assertSafeRevision(record:RunRecord,ids:Set<string>,detail:Detail
 }
 export async function actWorkflowRun(id:string,input:unknown,owner:string) {
   recordId.parse(owner);const parsed=actionInput.parse(input);
+  if((await loadRun(id)).data.n8n)return n8nAction(id,parsed);
   return serialize("run:"+id,async()=>{
     const record=await loadRun(id);assertRevision(record,parsed.expected_revision);const run=record.data;let detail=await episodeDetails(run.episode);
     assertRunContext(record,detail);
@@ -374,7 +395,8 @@ export async function actWorkflowRun(id:string,input:unknown,owner:string) {
     } else if(parsed.action==="review") {
       const node=nodeFor(run,parsed.node_id),state=run.states[node.id];
       if(state?.status!=="waiting_review"||!state.output_revision||!parsed.document_revision||state.output_revision!==parsed.document_revision)conflict("Review must match the exact current output revision.");
-      const current=state.document?detail.revisions[state.document]:checkManual(node,detail).revision;
+      // A custom stage's result is its own Markdown file, not a document or a set of assets.
+      const current=state.document?detail.revisions[state.document]:node.kind==="custom"?documentRevision(await readNodeOutput(detail.episode.vault_path,node.id)):checkManual(node,detail).revision;
       if(current!==parsed.document_revision)conflict("The output changed after it was shown. Sync or revise this stage before reviewing the current revision.");
       if(node.kind==="script")await db.update("episodes",run.episode,{script_approved:true,script_meta:{...detail.episode.script_meta,approved_revision:current}});
       state.status="completed";addMessage(run,"system",`${node.title} disetujui (versi ${current.slice(0,8)}).`,node.id);
@@ -395,17 +417,37 @@ export async function actWorkflowRun(id:string,input:unknown,owner:string) {
 // stage, approves only confirmed-free model quotes, and stops at a review, a paid quote, a stage
 // that is still running on the worker, or an error. It runs in the background; clients poll.
 const advancing=new Set<string>();
+// Stop bumps a task's epoch; loops and agent turns started before it see the change and quit.
+const stops=new Map<string,number>();
+export function stopEpoch(id:string){const epoch=stops.get(id)||0;return ()=>(stops.get(id)||0)===epoch;}
 export async function advanceWorkflowRun(id:string,input:unknown,owner:string,after?:()=>Promise<void>){
   recordId.parse(owner);const parsed=z.object({node_id:idSchema.optional()}).strict().parse(input);
   const record=await loadRun(id);
-  if(!advancing.has(id)){advancing.add(id);void advanceLoop(id,parsed.node_id,owner).finally(()=>advancing.delete(id)).then(()=>after?.()).catch(()=>undefined);}
+  if(!advancing.has(id)){advancing.add(id);const alive=stopEpoch(id);
+    void (record.data.n8n?n8nAdvance(id,parsed.node_id,alive):advanceLoop(id,parsed.node_id,owner,alive)).finally(()=>advancing.delete(id)).then(()=>alive()?after?.():undefined).catch(()=>undefined);}
   return {...await result(record),advancing:true};
 }
-async function advanceLoop(id:string,first:string|undefined,owner:string){
+// Stop always answers at once, even while a stage holds the task's lock: the background loop and
+// the agent are released now, n8n is asked to stop, and running stages are marked stopped as soon
+// as the lock frees. Nothing a stopped task does afterwards starts new work.
+export async function stopWorkflowRun(id:string){
+  const record=await loadRun(id);stops.set(id,(stops.get(id)||0)+1);advancing.delete(id);thinking.delete(id);
+  const execution=record.data.n8n?.execution_id;
+  void (async()=>{
+    const stoppedN8n=execution?await stopN8nExecution(execution).then(()=>true,()=>false):true;
+    await updateRun(id,run=>{for(const [key,state] of Object.entries(run.states))if(state.status==="running")run.states[key]={...state,status:"blocked",error:"Dihentikan. Jalankan lagi atau ulangi tahap kapan saja."};
+      addMessage(run,"system",stoppedN8n?"Task dihentikan.":"Task dihentikan di Studio. n8n tidak menjawab permintaan berhenti; cek eksekusinya di n8n.");});
+  })().catch(()=>undefined);
+  return {...await result(record),advancing:false,thinking:false,stopping:true};
+}
+async function advanceLoop(id:string,first:string|undefined,owner:string,alive:()=>boolean){
   try{
-    for(let step=0;step<24;step++){
+    for(let step=0;step<24&&alive();step++){
       const run=(await loadRun(id)).data,status=(node:WorkflowNode)=>run.states[node.id]?.status||"idle",stages=run.graph.nodes.filter(n=>n.kind!=="reference");
-      if(first){const node=nodeFor(run,first);first=undefined;if(!["waiting_review","waiting_approval","running","completed"].includes(status(node))){await actWorkflowRun(id,{action:"prepare",node_id:node.id,expected_revision:run.revision},owner);continue;}}
+      if(first){const node=nodeFor(run,first);first=undefined;
+        // "Try again" on a stopped stage resets it first; a stopped stage cannot be prepared as-is.
+        if(["blocked","failed"].includes(status(node))){await actWorkflowRun(id,{action:"revise",node_id:node.id,expected_revision:run.revision},owner);first=node.id;continue;}
+        if(!["waiting_review","waiting_approval","running","completed"].includes(status(node))){await actWorkflowRun(id,{action:"prepare",node_id:node.id,expected_revision:run.revision},owner);continue;}}
       if(stages.some(n=>["running","blocked","failed","waiting_review"].includes(status(n))))return;
       const quoted=stages.find(n=>status(n)==="waiting_approval");
       if(quoted){const actual=await db.get<SpendQuote&{payload:{billing?:string}}>("spend_quotes",run.states[quoted.id].quote!.id);try{assertAutomaticQuote(actual);}catch{return;}

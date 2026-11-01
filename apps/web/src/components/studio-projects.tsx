@@ -1,6 +1,6 @@
 "use client";
 import {useState} from "react";
-import {AlertTriangle,Archive,ArchiveRestore,Check,Clock,FolderPlus,LoaderCircle,Pencil,Repeat,X} from "lucide-react";
+import {AlertTriangle,Archive,ArchiveRestore,Check,Clock,FolderPlus,LoaderCircle,Pencil,Repeat,Trash2,X} from "lucide-react";
 import type {Channel,ChannelPreferences} from "@studio/core";
 import {api,Button,Modal,date,type Dashboard} from "./ui";
 import {ChannelAvatar} from "./projects";
@@ -36,11 +36,14 @@ function ProjectCard({channel,workspace,busy,perform,refresh,open}:{channel:Chan
   const rename=()=>void perform(async()=>{const next=value.trim();if(next&&next!==name)await api<ChannelPreferences>("workspace/channels/"+channel.id,{...prefs,project_name:next===channel.name?"":next},"PUT");setEditing(false);await refresh();});
   const routine=prefs.research_enabled&&!prefs.archived;
   const archive=()=>void perform(async()=>{if(!prefs.archived&&!window.confirm("Arsipkan project "+name+"? Routine-nya berhenti, semua hasil tetap tersimpan."))return;await api<ChannelPreferences>("workspace/channels/"+channel.id,{...prefs,archived:!prefs.archived},"PUT");await refresh();});
+  // Permanent: the owner types the project's name to confirm.
+  const remove=()=>void perform(async()=>{const typed=window.prompt("Hapus project "+name+" beserta semua task, workflow, chat dan datanya? Ini tidak bisa dibatalkan.\n\nKetik nama project untuk menghapus:");if(typed===null)return;
+    await api("channels/"+channel.id+"/delete",{confirm:typed});await refresh();});
   return <article className="sp-card">
     <button type="button" className="sp-card-open" onClick={open} aria-label={"Buka project "+name}/>
     <div className="sp-card-top"><ChannelAvatar channel={channel}/>{routine?<span className="sp-routine is-on" title={"Routine "+(prefs.routine_mode==="auto"?"Auto":"Approval")+" · "+prefs.slots.join(", ")}><Repeat size={12}/><i/>Routine · {prefs.routine_mode==="auto"?"Auto":"Approval"}</span>:<span className="sp-routine"><Repeat size={12}/>Routine mati</span>}</div>
     {editing?<form className="sp-rename" onSubmit={e=>{e.preventDefault();rename();}}><input autoFocus value={value} maxLength={80} onChange={e=>setValue(e.target.value)} aria-label="Nama project" onKeyDown={e=>{if(e.key==="Escape"){setEditing(false);setValue(name);}}}/><button className="icon-button" aria-label="Simpan nama" disabled={busy}><Check size={14}/></button><button type="button" className="icon-button" aria-label="Batal" onClick={()=>{setEditing(false);setValue(name);}}><X size={14}/></button></form>
-      :<div className="sp-name"><h2>{name}</h2><button type="button" className="icon-button" aria-label="Ubah nama project" title="Ubah nama" onClick={()=>{setValue(name);setEditing(true);}}><Pencil size={13}/></button><button type="button" className="icon-button sp-archive" disabled={busy} aria-label={prefs.archived?"Pulihkan project":"Arsipkan project"} title={prefs.archived?"Pulihkan dari arsip":"Arsipkan project"} onClick={archive}>{prefs.archived?<ArchiveRestore size={13}/>:<Archive size={13}/>}</button></div>}
+      :<div className="sp-name"><h2>{name}</h2><button type="button" className="icon-button" aria-label="Ubah nama project" title="Ubah nama" onClick={()=>{setValue(name);setEditing(true);}}><Pencil size={13}/></button><button type="button" className="icon-button sp-archive" disabled={busy} aria-label={prefs.archived?"Pulihkan project":"Arsipkan project"} title={prefs.archived?"Pulihkan dari arsip":"Arsipkan project"} onClick={archive}>{prefs.archived?<ArchiveRestore size={13}/>:<Archive size={13}/>}</button><button type="button" className="icon-button sp-archive sp-delete" disabled={busy} aria-label="Hapus project" title="Hapus project" onClick={remove}><Trash2 size={13}/></button></div>}
     <p className="sp-sub">{workflow?(workflow.draft?"Workflow · draft menunggu task selesai":"Workflow · "+workflow.graph.nodes.filter(n=>n.kind!=="reference").length+" tahap"):"Belum ada workflow · mulai di Initiate"}</p>
     <div className="sp-counts">
       {counts.running>0&&<span className="sp-count is-running"><LoaderCircle size={12} className="spin"/>{counts.running} berjalan</span>}

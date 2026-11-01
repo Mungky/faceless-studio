@@ -1,5 +1,9 @@
 node_modules/
 .next/
+# Local-only: plugin checkout, per-project agent workspaces written by the app, editor launch config
+ECC/
+projects/
+.claude/
 .env
 .env.*
 !.env.example

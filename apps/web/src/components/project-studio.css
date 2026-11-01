@@ -81,6 +81,7 @@
 .pj-save .text-button{margin-left:4px;font-size:12px;color:var(--accent)}
 .faceless-app .pj-routine-on{border-color:rgba(209,254,23,.45);color:var(--accent)}
 .pj-live-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);animation:studio-pulse 1.4s ease-in-out infinite}
+.pj-live-badge{display:inline-flex;align-items:center;gap:6px;margin-left:auto;padding:3px 9px;border-radius:999px;background:rgba(209,254,23,.1);color:var(--accent);font-size:11.5px;font-weight:600}
 .pj-history{position:relative}
 .pj-menu{position:absolute;top:calc(100% + 8px);right:0;z-index:20;width:260px;max-height:320px;overflow:auto;display:flex;flex-direction:column;gap:2px;padding:8px;border-radius:16px;border:1px solid #2a2a2a;background:#151515;box-shadow:0 30px 60px -20px #000}
 .pj-menu>strong{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--quiet);padding:4px 8px}
@@ -129,8 +130,14 @@
 .pj-inspector-head{display:flex;align-items:center;justify-content:space-between;padding:12px 12px 10px 18px;border-bottom:1px solid var(--line-soft)}
 .pj-inspector-head strong{font-size:13px}
 .faceless-app .pj-upload{align-self:flex-start;cursor:pointer}
-.pj-chat-title{flex:1;min-width:0;display:flex;flex-direction:column;padding:2px 4px}
+.pj-chat-title{flex:0 0 auto;min-width:0;display:flex;flex-direction:column;padding:2px 4px}
 .pj-chat-title strong{font-size:14px}
+.pj-chat-title-tabs{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
+.pj-chat-title-tabs .pj-tabs{margin-left:auto}
+.pj-chat-title-tabs .pj-tabs button{height:25px;padding:0 10px;font-size:11.5px}
+.pj-dsh-container{flex:1;width:100%;height:100%;min-height:0;display:flex;overflow:hidden;background:#0a0a0a}
+.pj-dsh-frame{flex:1;width:100%;height:100%;border:0;background:#0a0a0a}
+.studio-panel.pj-chat{width:460px}
 .pj-chat-chip{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;max-width:100%;height:26px;padding:0 6px 0 10px;border-radius:999px;background:var(--accent-bg);color:var(--accent);font-size:12px;font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .pj-chat-chip button{display:inline-flex;border:0;background:transparent;color:inherit;cursor:pointer;padding:2px}
 .faceless-app .pj-chat-pill{left:auto;right:16px;transform:none;padding:0 18px}
@@ -218,6 +225,10 @@
 /* Task chat */
 .tc-event{display:flex;flex-wrap:wrap;gap:6px;align-self:center;max-width:94%;margin:0;padding:4px 10px;border-radius:999px;background:#151515;color:var(--quiet);font-size:11.5px;line-height:1.45;text-align:center;justify-content:center}
 .tc-event b{color:var(--muted);font-weight:600}
+.tc-stop{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;margin:0;padding:5px 12px;border:1px solid color-mix(in srgb,var(--red) 45%,transparent);border-radius:999px;background:transparent;color:var(--red);font-size:12.5px;font-weight:600}
+.tc-stop:hover:not(:disabled),.studio-run-head .danger:hover:not(:disabled){background:color-mix(in srgb,var(--red) 14%,transparent)}
+.studio-run-head .danger{color:var(--red);border-color:color-mix(in srgb,var(--red) 45%,transparent)}
+.sp-delete:hover:not(:disabled){color:var(--red)}
 .tc-live{display:flex;align-items:center;gap:8px;align-self:flex-start;margin:0;padding:6px 12px;border-radius:999px;background:var(--accent-bg);color:var(--accent);font-size:12.5px;font-weight:600}
 .tc-quick{display:flex;flex-wrap:wrap;gap:6px}
 .tc-quick button{height:28px;padding:0 12px;border-radius:999px;border:1px solid #2e2e2e;background:#1d1d1d;color:var(--text);font-size:12px;font-weight:600;cursor:pointer}
@@ -234,3 +245,13 @@
 .sp-archive-note{color:var(--muted);font-size:13px;margin:-12px 0 0}
 .pj-dock-body li.is-archived .pj-task{opacity:.7}
 .pj-dock-done svg+svg{margin-left:-2px}
+
+/* n8n editor inside the Workflow page */
+.n8n-pane{position:absolute;inset:80px 16px 16px 16px;display:flex;flex-direction:column;gap:8px}
+.pj-stage.has-chat .n8n-pane{right:492px}
+.n8n-switch{position:absolute;top:10px;right:14px;z-index:2;display:flex;gap:6px;align-items:center;background:rgba(18,18,18,.85);backdrop-filter:blur(10px);padding:4px 8px;border-radius:12px;border:1px solid #2a2a2a}
+.n8n-switch select{height:32px;max-width:260px}
+.n8n-frame{flex:1;width:100%;border:1px solid #262626;border-radius:20px;background:#0a0a0a}
+.n8n-empty{margin:auto;display:flex;flex-direction:column;align-items:center;gap:10px;max-width:420px;text-align:center;color:var(--muted)}
+.n8n-empty strong{color:var(--text)}.n8n-empty svg{color:var(--accent)}
+.n8n-empty code{padding:1px 6px;border-radius:6px;background:#1c1c1c;color:var(--text)}

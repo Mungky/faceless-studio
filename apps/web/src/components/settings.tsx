@@ -23,7 +23,51 @@ export function ServiceStatus({ data, busy, run }: { data: Dashboard; busy: bool
 }
 
 export function StorageInfo({ data }: { data: Dashboard }) {
-  return <section className="settings-section"><h2>Penyimpanan</h2><div className="storage-row"><Folder size={19} /><div><strong>Vault Obsidian</strong><code className="path-text">{data.configuration.vault}</code><p>Markdown tetap di vault. Sinkronkan ke server dengan Obsidian Git.</p></div></div><div className="storage-row"><Database size={19} /><div><strong>PocketBase</strong><p>Status episode, antrean job, metadata, dan token OAuth terenkripsi.</p></div><Status value="connected" /></div><div className="storage-row"><Cable size={19} /><div><strong>Media</strong><p>{data.configuration.drive ? "Google Drive aktif sebagai penyimpanan utama." : "Drive belum diatur. Asset disimpan di folder cache server dan tetap bisa dipratinjau."}</p></div></div></section>;
+  return (
+    <section className="settings-section">
+      <h2>Penyimpanan Data & Asset Project</h2>
+      <p className="muted">
+        Semua data project Restard Studio tersimpan rapi dan aman di komputer lokal Anda.
+      </p>
+
+      <div className="storage-row">
+        <Folder size={20} />
+        <div>
+          <strong>Direktori Project Lokal</strong>
+          <code className="path-text">projects/&lt;Nama Project&gt;/</code>
+          <p>
+            Setiap project memiliki foldernya sendiri. Berisi file <code>system.md</code>, panduan produksi, serta dokumen riset yang dianalisis oleh AI. Folder ini berada langsung di penyimpanan lokal Anda (<code>D:\Faceless Creation\studio - Copy\projects</code>).
+          </p>
+        </div>
+        <Status value="connected" />
+      </div>
+
+      <div className="storage-row">
+        <Database size={20} />
+        <div>
+          <strong>Database Internal (PocketBase)</strong>
+          <code className="path-text">http://127.0.0.1:8095</code>
+          <p>
+            Menyimpan data channel, preferensi n8n, dan riwayat chat secara otomatis. Berjalan lokal di latar belakang tanpa memerlukan konfigurasi manual.
+          </p>
+        </div>
+        <Status value="connected" />
+      </div>
+
+      <div className="storage-row">
+        <Cable size={20} />
+        <div>
+          <strong>Penyimpanan Media & Cloud (Opsional)</strong>
+          <p>
+            {data.configuration.drive
+              ? "Google Drive terhubung via rclone untuk sinkronisasi cadangan file video besar ke cloud."
+              : "Menggunakan penyimpanan lokal. Semua aset video dan gambar disimpan langsung di folder lokal komputer Anda tanpa biaya cloud."}
+          </p>
+        </div>
+        <Status value={data.configuration.drive ? "connected" : "configured"} />
+      </div>
+    </section>
+  );
 }
 
 function ActivityIcon() { return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M5 8v8M9 4v16M13 7v10M17 2v20M21 9v6" /></svg>; }

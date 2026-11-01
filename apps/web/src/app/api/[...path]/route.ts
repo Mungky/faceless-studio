@@ -11,12 +11,13 @@ import { db, DatabaseError, filterValue } from "../../../server/pocketbase";
 import { authenticate, checkOrigin, sessionCookie, secretMatches, encrypt } from "../../../server/auth";
 import { dashboard, configuration, episodeContext, episodeDetails, createEpisode, makeQuote, approveQuote, queueLocalJob, syncEpisode, syncAll, importSupplement, spending, spendingSchema, documentRevision } from "../../../server/service";
 import { readDocument, readBeats, writeDocument, writeBeats, documentNames, readPlaybook,documentHistory,historicalDocument } from "../../../server/vault";
-import { projectData, syncProject, syncProjectProfiles, videoAnalyticsData, syncVideoAnalytics } from "../../../server/projects";
-import { createChannel } from "../../../server/channels";
-import {workflowLibrary,workflowTemplate,createWorkflowTemplate,saveWorkflowTemplate,deleteWorkflowTemplate,createWorkflowRun,workflowRunData,messageWorkflowRun,actWorkflowRun,closeWorkflowRun,archiveWorkflowRun} from "../../../server/workflows";
+import { projectData, syncProject, syncProjectProfiles, videoAnalyticsData, syncVideoAnalytics, projectDriveOutputs, syncProjectDriveOutputs } from "../../../server/projects";
+import { createChannel, deleteChannel } from "../../../server/channels";
+import {workflowLibrary,workflowTemplate,createWorkflowTemplate,saveWorkflowTemplate,deleteWorkflowTemplate,createWorkflowRun,workflowRunData,messageWorkflowRun,actWorkflowRun,closeWorkflowRun,archiveWorkflowRun,stopWorkflowRun,deleteWorkflowRun} from "../../../server/workflows";
 import {workspaceData,channelPreferences,saveChannelPreferences,createProduction,discoveryData,addCompetitor,discover,saveReference,inspectReference,generateVideoReport,proposeTemplate,decideProposal,recoverTask} from "../../../server/workspace";
 import {automationTick} from "../../../server/scheduler";
 import {runTask,sendTaskMessage} from "../../../server/task-agent";
+import {n8nProject,buildN8nWorkflow} from "../../../server/n8n";
 import {studioThreads,studioThread,projectThread,createStudioThread,sendStudioMessage,applyStudioAction} from "../../../server/studio-chat";
 import {forYouData,addReference,searchReferences,saveForYouReference,analyzeReference,addForYouCompetitor,completeDeepAnalysis} from "../../../server/foryou";
 import {organizeAssets,updateAsset} from "../../../server/assets";
@@ -62,7 +63,7 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
       return reply(await syncAll());
     }
     const user = await authenticate(request);
-    if (!user) return reply({ error: "Sign in to Faceless Studio." }, 401);
+    if (!user) return reply({ error: "Sign in to Restard Studio." }, 401);
     if (route === "me" && method === "GET") return reply({ user });
     if (route === "logout" && method === "POST") { const response = reply({ ok: true }); response.cookies.delete(sessionCookie); return response; }
     if(route==="settings/connections"&&method==="GET")return reply(await serviceConnections());
@@ -71,6 +72,9 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
     if(route==="settings/keys"&&method==="POST")return reply(await saveProviderKey(await body(request)));
     if (route === "dashboard" && method === "GET") return reply(await dashboard());
     if(route==="workspace"&&method==="GET")return reply(await workspaceData());
+    if(parts[0]==="n8n"&&parts[1]==="projects"&&parts[2]){const channel=recordId.parse(parts[2]);
+      if(parts.length===3&&method==="GET")return reply(await n8nProject(channel));
+      if(parts[3]==="build"&&method==="POST")return reply(await buildN8nWorkflow(channel,z.object({name:z.string().trim().max(120).optional()}).strict().parse(await body(request))),201);}
     if(parts[0]==="studio"&&parts[1]==="projects"&&parts[2]&&parts[3]==="thread"&&method==="GET")return reply(await projectThread(recordId.parse(parts[2])));
     if(parts[0]==="studio"&&parts[1]==="threads"){
       if(!parts[2]&&method==="GET")return reply(await studioThreads());
@@ -119,8 +123,11 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
       if(parts.length===3&&parts[2]==="chat"&&method==="POST")return reply(await sendTaskMessage(id,await body(request),user.id));
       if(parts.length===3&&parts[2]==="archive"&&method==="POST")return reply(await archiveWorkflowRun(id,await body(request)));
       if(parts.length===3&&parts[2]==="close"&&method==="POST")return reply(await closeWorkflowRun(id,await body(request)));
+      if(parts.length===3&&parts[2]==="stop"&&method==="POST")return reply(await stopWorkflowRun(id));
+      if((parts.length===2&&method==="DELETE")||(parts.length===3&&parts[2]==="delete"&&method==="POST"))return reply(await deleteWorkflowRun(id));
     }
     if (route === "channels" && method === "POST") return reply(await createChannel(await body(request)),201);
+    if (parts[0]==="channels"&&parts[1]&&parts.length===3&&parts[2]==="delete"&&method==="POST") return reply(await deleteChannel(parts[1],await body(request)));
     if (route === "projects/sync" && method === "POST") return reply(await syncProjectProfiles());
     if (parts[0] === "projects" && parts[1]) {
       if(parts[2]==="videos"&&parts[3]){
@@ -129,6 +136,8 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
         if(parts.length===5&&parts[4]==="sync"&&method==="POST"){const range=z.object({start:z.string(),end:z.string()}).parse(await body(request));return reply(await syncVideoAnalytics(channelId,selectedVideo,range.start,range.end));}
       }
       const id = recordId.parse(parts[1]);
+      if(parts.length===3&&parts[2]==="drive"&&method==="GET")return reply(await projectDriveOutputs(id));
+      if(parts.length===4&&parts[2]==="drive"&&parts[3]==="sync"&&method==="POST")return reply(await syncProjectDriveOutputs(id));
       if (parts.length === 2 && method === "GET") return reply(await projectData(id, request.nextUrl.searchParams.get("start") || "", request.nextUrl.searchParams.get("end") || ""));
       if (parts.length === 3 && parts[2] === "sync" && method === "POST") {
         const input = z.object({ start: z.string(), end: z.string() }).strict().parse(await body(request));

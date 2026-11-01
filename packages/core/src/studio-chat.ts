@@ -16,6 +16,14 @@ export const studioActionSchema=z.discriminatedUnion("type",[
   z.object({type:z.literal("analyze_reference"),url:z.string().url().max(2000)}),
   z.object({type:z.literal("run_step"),run_id:z.string().min(1),node_id:z.string().max(80).optional()}),
   z.object({type:z.literal("add_reference"),template_id:z.string().min(1).max(80),name:z.string().trim().min(1).max(200),ref_type:z.enum(referenceTypes).default("link"),url:z.string().max(2000).default(""),content:z.string().max(50_000).default(""),instructions:z.string().max(20_000).default(""),target:z.string().max(80).optional()}),
+  z.object({type:z.literal("build_n8n_workflow"),name:z.string().trim().max(120).optional()}),
+  z.object({type:z.literal("add_n8n_node"),workflow_id:z.string().optional(),explanation:z.string().max(2000).optional(),node:z.object({name:z.string().trim().min(1).max(120),type:z.string().min(1).max(120),typeVersion:z.number().default(1),parameters:z.record(z.string(),z.any()).default({}),credentials:z.record(z.string(),z.any()).optional(),position:z.tuple([z.number(),z.number()]).optional()}),connect_from:z.string().optional(),connect_to:z.string().optional()}),
+  z.object({type:z.literal("modify_n8n_node"),workflow_id:z.string().optional(),node_name:z.string().min(1).max(120),explanation:z.string().max(2000).optional(),parameters:z.record(z.string(),z.any()).optional(),prompt:z.string().max(20_000).optional()}),
+  z.object({type:z.literal("remove_n8n_node"),workflow_id:z.string().optional(),node_name:z.string().min(1).max(120),explanation:z.string().max(2000).optional()}),
+  z.object({type:z.literal("update_n8n_workflow"),workflow_id:z.string().optional(),explanation:z.string().max(2000).optional(),nodes:z.array(z.record(z.string(),z.any())),connections:z.record(z.string(),z.any())}),
+  z.object({type:z.literal("setup_n8n_credential"),name:z.string().trim().min(1).max(120),credential_type:z.string().min(1).max(120),data:z.record(z.string(),z.any())}),
+  z.object({type:z.literal("publish_n8n_workflow"),workflow_id:z.string().optional(),active:z.boolean().default(true),explanation:z.string().max(2000).optional()}),
+  z.object({type:z.literal("execute_n8n_workflow"),workflow_id:z.string().optional(),brief:z.string().max(2000).default(""),title:z.string().max(200).default(""),explanation:z.string().max(2000).optional()}),
   z.object({type:z.literal("direct_task"),run_id:z.string().min(1),node_id:z.string().max(80).optional(),content:z.string().trim().min(1).max(20_000)})]);
 export type StudioAction=z.infer<typeof studioActionSchema>;
 export interface StudioMessage {id:string;role:"user"|"assistant";content:string;created:string;action?:StudioAction&{status:"proposed"|"applied"|"dismissed"|"failed";result?:string;link?:{view:string;id:string}};}

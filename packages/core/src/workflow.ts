@@ -13,7 +13,7 @@ export interface WorkflowTemplate { id:string;name:string;description:string;cha
 export type WorkflowNodeStatus = "idle"|"ready"|"running"|"waiting_approval"|"waiting_review"|"completed"|"failed"|"blocked";
 export interface WorkflowNodeState { status:WorkflowNodeStatus;quote?:{id:string;operation:string;provider:string;units:number;est_cost:number;currency:string;expires:string;note:string};job_id?:string;document?:"riset.md"|"script.md"|"storyboard.md"|"upload-pack.md";output?:string;error?:string;output_revision?:string;beat?:number;provided_by_user?:boolean; }
 export interface WorkflowMessage { id:string;role:"user"|"assistant"|"system";content:string;node_id?:string;created_at:string; }
-export interface WorkflowRun {id:string;request_key?:string;template_id:string;template_name:string;template_version?:string;playbook_snapshot?:string;channel:string;episode:string;graph:WorkflowGraph;playbook_path:string;instructions:string;brief:string;status:"idle"|"running"|"waiting"|"completed"|"failed";states:Record<string,WorkflowNodeState>;messages:WorkflowMessage[];revision:number;created:string;updated:string;closed?:boolean;archived?:boolean;}
+export interface WorkflowRun {id:string;request_key?:string;template_id:string;template_name:string;template_version?:string;playbook_snapshot?:string;channel:string;episode:string;graph:WorkflowGraph;playbook_path:string;instructions:string;brief:string;status:"idle"|"running"|"waiting"|"completed"|"failed";states:Record<string,WorkflowNodeState>;messages:WorkflowMessage[];revision:number;created:string;updated:string;closed?:boolean;archived?:boolean;n8n?:{workflow_id:string;execution_id?:string};}
 export const workflowNodeInfo:Record<WorkflowNodeKind,{label:string;description:string}> = {
   brief:{label:"Brief",description:"Set the direction for this production."},
   research:{label:"Research",description:"Collect source-aware leads and verify evidence before writing."},
@@ -39,9 +39,7 @@ export function validateWorkflowGraph(value:unknown):WorkflowGraph {
   const graph=graphSchema.parse(value); const ids=new Set(graph.nodes.map(n=>n.id));
   if(ids.size!==graph.nodes.length) throw new Error("Node identifiers must be unique");
   const briefs=graph.nodes.filter(n=>n.kind==="brief"); if(briefs.length!==1) throw new Error("Exactly one brief root is required");
-  // Each production has one canonical document/take set per stage. Node-specific
-  // artifact namespaces are needed before repeated writers can safely coexist.
-  const slots=new Set<string>();for(const node of graph.nodes){if(["review","custom","reference"].includes(node.kind))continue;const slot=node.kind==="media"?`media-${node.media_kind||"image"}`:node.kind;if(slots.has(slot))throw new Error(`Only one ${workflowNodeInfo[node.kind].label} stage${node.kind==="media"?` for ${node.media_kind||"image"}`:""} can write this production's output. Revise the existing stage instead.`);slots.add(slot);}
+  // Multi-stage pipelines (e.g. Riset YouTube + Riset Instagram) are supported with unique node identifiers.
   const incoming=new Map(graph.nodes.map(n=>[n.id,0])); const outgoing=new Map(graph.nodes.map(n=>[n.id,[] as string[]]));
   const edgeIds=new Set<string>(),pairs=new Set<string>();
   for(const edge of graph.edges) {

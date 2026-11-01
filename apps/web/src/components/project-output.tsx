@@ -1,39 +1,181 @@
 "use client";
-import {useState} from "react";
-import {Download,FileText,Film,Image as ImageIcon,Mic,PackageOpen} from "lucide-react";
-import type {Asset,WorkflowRun,WorkflowTemplate} from "@studio/core";
-import {Modal,date} from "./ui";
+import {useCallback,useEffect,useState} from "react";
+import {AudioLines,Download,FileText,Film,Folder,HardDrive,Image as ImageIcon,LoaderCircle,PackageOpen,RefreshCw} from "lucide-react";
+import type {Asset,WorkflowTemplate} from "@studio/core";
+import {api,Button,Modal,date} from "./ui";
 import {ProjectBar,type ProjectProps} from "./project-studio";
-import {projectTasks,taskStatus,taskStatusLabel} from "./project-model";
 
-// Which kind of card produces each asset kind, so a file can name the card it came from.
-const stageOf:Record<string,string[]>={vo:["voiceover"],image:["media"],video:["media"],render:["render","review"],thumb:["media"]};
-const kindIcon=(kind:string)=>kind==="vo"?Mic:kind==="render"||kind==="video"?Film:ImageIcon;
-type TextOutput={node:string;card:string;text:string};
+type DriveOutputItem = {
+  id?: string;
+  name: string;
+  path: string;
+  size: number;
+  kind: "video" | "vo" | "image" | "doc";
+  assetId?: string;
+};
 
-// Output: everything this project produced, grouped by task and labelled with its card.
-export function ProjectOutput(props:ProjectProps&{workflow:WorkflowTemplate}){
-  const {project,data,workspace}=props;
-  const tasks=projectTasks(workspace,project),[filter,setFilter]=useState<"all"|"text"|"media">("all"),[preview,setPreview]=useState<{title:string;text?:string;asset?:Asset}|null>(null);
-  const assetsOf=(run:WorkflowRun)=>data.assets.filter(a=>a.episode===run.episode&&!a.deleted);
-  const cardOf=(run:WorkflowRun,asset:Asset)=>run.graph.nodes.find(n=>stageOf[asset.kind]?.includes(n.kind)&&(n.kind!=="media"||(n.media_kind||"image")===(asset.kind==="video"?"video":"image")))?.title||asset.kind;
-  const textsOf=(run:WorkflowRun):TextOutput[]=>run.graph.nodes.filter(n=>n.kind!=="reference"&&n.kind!=="brief"&&["completed","waiting_review"].includes(run.states[n.id]?.status||"")&&run.states[n.id]?.output&&!(run.states[n.id]?.provided_by_user&&!run.states[n.id]?.document&&n.kind==="research")&&!["voiceover","media","render","review"].includes(n.kind)).map(n=>({node:n.id,card:n.title,text:run.states[n.id]!.output!}));
-  const rows=tasks.map(run=>({run,texts:filter==="media"?[]:textsOf(run),assets:filter==="text"?[]:assetsOf(run)})).filter(r=>r.texts.length||r.assets.length);
-  const title=(run:WorkflowRun)=>data.episodes.find(e=>e.id===run.episode)?.title||run.template_name;
+const formatSize = (bytes: number) => bytes < 1024 ? bytes + " B" : bytes < 1048576 ? (bytes / 1024).toFixed(1) + " KB" : (bytes / 1048576).toFixed(1) + " MB";
+
+const extKind = (filepath: string): "video" | "vo" | "image" | "doc" => {
+  const ext = filepath.split(".").pop()?.toLowerCase() || "";
+  if (["mp4", "webm", "mkv", "mov"].includes(ext)) return "video";
+  if (["mp3", "wav", "m4a", "aac", "flac"].includes(ext)) return "vo";
+  if (["jpg", "jpeg", "png", "webp", "gif"].includes(ext)) return "image";
+  return "doc";
+};
+
+export function ProjectOutput(props: ProjectProps & { workflow: WorkflowTemplate }) {
+  const { project, perform, busy } = props;
+  const [loading, setLoading] = useState(true);
+  const [folder, setFolder] = useState("");
+  const [items, setItems] = useState<DriveOutputItem[]>([]);
+  const [filter, setFilter] = useState<"all" | "video" | "vo" | "image" | "doc">("all");
+  const [preview, setPreview] = useState<DriveOutputItem | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await api<{ project: string; folder: string; files: { id: string; path: string; size: number }[]; assets: Asset[] }>("projects/" + project + "/drive");
+      setFolder(data.folder);
+      const assetMap = new Map(data.assets.map(a => [a.drive_path, a]));
+      const list: DriveOutputItem[] = data.files.map(f => {
+        const matchingAsset = assetMap.get(f.path);
+        const name = f.path.split("/").pop() || f.path;
+        return {
+          id: f.id,
+          name,
+          path: f.path,
+          size: f.size,
+          kind: extKind(f.path),
+          assetId: matchingAsset?.id
+        };
+      });
+      // Also include any assets that may have been generated directly
+      for (const a of data.assets) {
+        if (!list.some(item => item.path === a.drive_path)) {
+          list.push({
+            id: a.id,
+            name: a.title || a.drive_path.split("/").pop() || "Asset",
+            path: a.drive_path,
+            size: Number(a.meta?.size) || 0,
+            kind: a.kind === "video" || a.kind === "render" ? "video" : a.kind === "vo" || a.kind === "music" ? "vo" : ["image", "thumb"].includes(a.kind) ? "image" : "doc",
+            assetId: a.id
+          });
+        }
+      }
+      setItems(list);
+    } catch {
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [project]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const sync = () => void perform(async () => {
+    await api("projects/" + project + "/drive/sync", {});
+    await load();
+  });
+
+  const visible = items.filter(item => filter === "all" || item.kind === filter);
+
   return <div className="pj-page">
-    <ProjectBar props={props} tab="output"/>
+    <ProjectBar props={props} tab="assets">
+      <div className="pj-bar-actions">
+        <Button disabled={busy || loading} onClick={sync} title="Sinkronkan file asset untuk project ini">
+          <RefreshCw size={13} className={loading ? "spin" : ""} />
+          Sinkronkan
+        </Button>
+      </div>
+    </ProjectBar>
+
     <div className="po-body">
-      <header className="po-head"><div><span className="eyebrow">OUTPUT</span><h1>Hasil project</h1><p>Semua file dan dokumen yang dihasilkan task di project ini. File media juga muncul di halaman Asset.</p></div>
-        <div className="pj-tabs" role="tablist" aria-label="Jenis output">{(["all","text","media"] as const).map(f=><button key={f} role="tab" aria-selected={filter===f} onClick={()=>setFilter(f)}>{f==="all"?"Semua":f==="text"?"Dokumen":"Media"}</button>)}</div></header>
-      {!rows.length?<div className="po-empty"><PackageOpen size={30} strokeWidth={1.3}/><strong>Belum ada output</strong><p>Hasil tiap kartu muncul di sini begitu sebuah task menyelesaikannya.</p></div>
-        :rows.map(({run,texts,assets})=><section key={run.id} className="po-task">
-          <header><button className="po-task-title" onClick={()=>props.navigate("workflow",run.id)}><strong>{title(run)}</strong><small>Task · {taskStatusLabel[taskStatus(run)]} · {date(run.updated)}</small></button></header>
-          <div className="po-grid">
-            {texts.map(t=><button key={t.node} className="po-item is-text" onClick={()=>setPreview({title:t.card+" · "+title(run),text:t.text})}><span className="po-thumb"><FileText size={22}/></span><span className="po-meta"><b>{t.card}</b><small>{t.text.replace(/\s+/g," ").slice(0,110)}</small></span></button>)}
-            {assets.map(a=>{const Icon=kindIcon(a.kind);return <button key={a.id} className="po-item" onClick={()=>setPreview({title:cardOf(run,a)+" · "+title(run),asset:a})}><span className="po-thumb">{["image","thumb"].includes(a.kind)?<img src={"/api/assets/"+a.id+"/preview"} alt="" loading="lazy"/>:<Icon size={22}/>}</span><span className="po-meta"><b>{cardOf(run,a)}</b><small>{a.title||a.drive_path.split("/").pop()}</small></span></button>;})}
-          </div>
-        </section>)}
+      <header className="po-head">
+        <div>
+          <span className="eyebrow">PROJECT ASSETS</span>
+          <h1>Assets Project</h1>
+          <p>Semua hasil generate n8n dan media project ini. Tersimpan fleksibel di folder lokal (<code>{folder || `Faceless/...`}</code>) atau penyimpanan cloud yang terhubung.</p>
+        </div>
+        <div className="pj-tabs" role="tablist" aria-label="Filter output">
+          {(["all", "video", "vo", "image", "doc"] as const).map(f => (
+            <button key={f} role="tab" aria-selected={filter === f} onClick={() => setFilter(f)}>
+              {f === "all" ? "Semua" : f === "video" ? "Video" : f === "vo" ? "Audio / VO" : f === "image" ? "Gambar" : "Dokumen"}
+            </button>
+          ))}
+        </div>
+      </header>
+
+      {loading ? (
+        <div className="po-empty">
+          <LoaderCircle size={26} className="spin" />
+          <p>Memuat asset project…</p>
+        </div>
+      ) : !visible.length ? (
+        <div className="po-empty">
+          <PackageOpen size={30} strokeWidth={1.3} />
+          <strong>Belum ada asset di project ini</strong>
+          <p>Jalankan workflow n8n untuk menghasilkan video, suara, atau gambar. Gunakan tombol <strong>Sinkronkan</strong> untuk memperbarui daftar asset.</p>
+        </div>
+      ) : (
+        <div className="po-grid">
+          {visible.map(item => {
+            const previewUrl = item.assetId ? `/api/assets/${item.assetId}/preview` : "";
+            const Icon = item.kind === "video" ? Film : item.kind === "vo" ? AudioLines : item.kind === "image" ? ImageIcon : FileText;
+            return (
+              <button key={item.path} className="po-item" onClick={() => setPreview(item)}>
+                <span className="po-thumb">
+                  {item.kind === "image" && previewUrl ? (
+                    <img src={previewUrl} alt="" loading="lazy" />
+                  ) : (
+                    <Icon size={24} />
+                  )}
+                </span>
+                <span className="po-meta">
+                  <b title={item.name}>{item.name}</b>
+                  <small>{formatSize(item.size)} · {item.kind.toUpperCase()}</small>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
-    {preview&&<Modal title={preview.title} wide close={()=>setPreview(null)}>{preview.text!==undefined?<pre className="po-text">{preview.text}</pre>:preview.asset&&<div className="media-player">{["image","thumb"].includes(preview.asset.kind)?<img alt="" src={"/api/assets/"+preview.asset.id+"/preview"}/>:preview.asset.kind==="vo"?<audio controls src={"/api/assets/"+preview.asset.id+"/preview"}/>:<video controls src={"/api/assets/"+preview.asset.id+"/preview"}/>}<a className="button" href={"/api/assets/"+preview.asset.id+"/preview"} download><Download size={13}/>Unduh</a></div>}</Modal>}
+
+    {preview && (
+      <Modal title={preview.name} wide close={() => setPreview(null)}>
+        <div className="media-player">
+          {preview.assetId ? (
+            preview.kind === "image" ? (
+              <img alt="" src={`/api/assets/${preview.assetId}/preview`} />
+            ) : preview.kind === "vo" ? (
+              <audio controls autoPlay src={`/api/assets/${preview.assetId}/preview`} />
+            ) : preview.kind === "video" ? (
+              <video controls autoPlay src={`/api/assets/${preview.assetId}/preview`} />
+            ) : (
+              <div className="po-text-preview">
+                <FileText size={32} />
+                <p>Dokumen disimpan di: <code>{preview.path}</code></p>
+              </div>
+            )
+          ) : (
+            <div className="po-text-preview">
+              <HardDrive size={32} />
+              <p>Lokasi file: <code>{preview.path}</code></p>
+            </div>
+          )}
+          <div className="button-row" style={{ marginTop: 12 }}>
+            {preview.assetId && (
+              <a className="button primary" href={`/api/assets/${preview.assetId}/preview`} download={preview.name}>
+                <Download size={13} />
+                Unduh file
+              </a>
+            )}
+          </div>
+        </div>
+      </Modal>
+    )}
   </div>;
 }

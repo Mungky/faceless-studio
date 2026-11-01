@@ -19,7 +19,7 @@ if (action === "start") {
   args = [path.join(root, "node_modules/next/dist/bin/next"), action, path.join(root, "apps/web")];
   if (action === "dev") args.push("--hostname", "127.0.0.1", "--port", "3100");
 }
-const child = spawn(process.execPath, args, { cwd: root, env: { ...process.env, PORT: "3100", HOSTNAME: "127.0.0.1" }, stdio: "inherit", windowsHide: true });
+const child = spawn(process.execPath, args, { cwd: root, env: { ...process.env, STUDIO_ROOT: root, PORT: "3100", HOSTNAME: "127.0.0.1" }, stdio: "inherit", windowsHide: true });
 child.on("error", error => { console.error(error.message); process.exitCode = 1; });
 child.on("exit", code => { process.exitCode = code || 0; });
 process.on("SIGINT", () => child.kill());

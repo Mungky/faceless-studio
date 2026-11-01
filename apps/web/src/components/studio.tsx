@@ -25,17 +25,140 @@ export function Studio(){
   const go=(next:Partial<WorkspaceLocation>)=>move({...initialLocation,...next});
   const selectedChannel=data?.channels.find(c=>c.id===location.channel);
   // Productions with a workflow run open on the Studio canvas; only legacy episodes use the old page.
-  const openEpisode=(id:string)=>{const run=workspace.runs.find(r=>r.episode===id);const channel=data?.episodes.find(e=>e.id===id)?.channel||location.channel;if(run)go({view:"studio",channel:run.channel,tab:"workflow",run:run.id});else go({view:"channel",channel,tab:"production",episode:id});};
+  const openEpisode=(id:string)=>{const run=workspace.runs.find(r=>r.episode===id);const channel=data?.episodes.find(e=>e.id===id)?.channel||location.channel;if(run)go({view:"studio",channel:run.channel,tab:"workflow",run:run.id});else go({view:"studio",channel,tab:"assets",episode:id});};
   function requestQuote(input:QuoteRequest){void perform(async()=>setQuote(await api<Quote>("quotes",input)));}
   if(checking)return <div className="workspace-loading"><Clapperboard size={28}/><p>Membuka Studio…</p></div>;
-  if(!user)return <div className="signin-page"><div className="signin-brand"><Clapperboard size={22}/><span>Faceless Studio</span></div><form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void perform(async()=>{const result=await api<{user:{email:string}}>("login",{email:f.get("email"),password:f.get("password")});setUser(result.user);await refresh();});}}><span className="eyebrow">PRIVATE WORKSPACE</span><h1>Selamat datang kembali.</h1><p>Channel, ide, dan produksi—dalam satu tempat.</p><label>Email<input name="email" type="email" autoComplete="username" required autoFocus/></label><label>Password<input name="password" type="password" autoComplete="current-password" required/></label>{error&&<p role="alert" className="danger-text">{error}</p>}<Button type="submit" className="primary" busy={busy}>Masuk<ArrowRight size={15}/></Button></form></div>;
-  const wide=!!location.episode||location.view==="studio"||location.view==="assets";
-  return <div className="faceless-app"><AppSidebar view={location.view} go={view=>go({view,channel:view==="channel"?"":location.channel})} workerOnline={!!data?.workers.some(workerOnline)} busy={busy} email={user.email} refresh={()=>void perform(refresh)} logout={()=>void perform(async()=>{await api("logout",{});setUser(null);setData(null);})}/>
-    <main className={"workspace-main"+(wide?" workspace-main-wide":"")+(location.episode?" workspace-main-episode":"")+(location.view==="studio"&&location.channel&&!location.episode?" workspace-main-studio":"")}>
-      {error&&<div className="workspace-message error-message" role="alert"><span>{error}</span><button className="icon-button" aria-label="Tutup pesan" onClick={()=>setError("")}><X size={14}/></button></div>}{notice&&<div className="workspace-message" role="status">{notice}</div>}
-      {!data?<div className="workspace-loading"><p>Data belum dapat dimuat.</p><Button onClick={()=>void perform(refresh)} busy={busy}>Coba lagi</Button></div>:location.episode?<EpisodeWorkspace key={location.episode} episode={location.episode} runId={location.run} data={data} busy={busy} perform={perform} refresh={refresh} back={()=>go({view:"channel",channel:location.channel,tab:"production"})} quote={requestQuote} onDirty={changeDirty}/>:location.view==="studio"?(data.channels.some(c=>c.id===location.channel)?<ProjectStudio key={location.channel} project={location.channel} tab={location.tab} run={location.run} data={data} workspace={workspace} busy={busy} perform={perform} refresh={refresh} navigate={(tab,run="")=>go({view:"studio",channel:location.channel,tab,run})} back={()=>go({view:"studio"})}/>:<StudioProjects data={data} workspace={workspace} busy={busy} perform={perform} refresh={refresh} open={id=>go({view:"studio",channel:id,tab:"workflow"})}/>):location.view==="foryou"?<ForYou workspace={workspace} busy={busy} perform={perform} toStudio={(analyses,prompt)=>{try{sessionStorage.setItem("faceless:studio-prompt",prompt);sessionStorage.setItem("faceless:studio-attach",JSON.stringify(analyses));}catch{}go({view:"studio"});}}/>:location.view==="assets"?<AssetsLibrary data={data} busy={busy} perform={perform} refresh={refresh} create={prompt=>{try{sessionStorage.setItem("faceless:studio-prompt",prompt);}catch{}go({view:"studio"});}}/>:location.view==="settings"?<SettingsPage data={data} busy={busy} perform={perform} refresh={refresh} tab={location.tab}/>:selectedChannel?<ChannelWorkspace key={selectedChannel.id} channel={selectedChannel} data={data} workspace={workspace} tab={["analytics","production","reports","settings"].includes(location.tab)?location.tab:"analytics"} video={location.video} busy={busy} perform={perform} refresh={refresh} navigate={(tab,video="")=>go({view:"channel",channel:selectedChannel.id,tab,video})} back={()=>go({view:"channel"})} newEpisode={()=>{setTemplate("");go({view:"studio",channel:selectedChannel.id});}} openEpisode={openEpisode} quote={requestQuote}/>:<Projects data={data} busy={busy} run={perform} refresh={refresh} openProject={id=>go({view:"channel",channel:id})} openSettings={()=>go({view:"settings",tab:"models"})}/>}
-    </main>
-    {quote&&<Modal title="Review permintaan" close={()=>{if(!busy)setQuote(null);}}><div className="quote-summary"><p>{quote.operation.replaceAll("_"," ")} · {quote.provider}</p><strong>{quote.currency==="USD"?money(quote.est_cost):quote.units+" credits"}</strong><p className="muted">{quote.note}</p><p className="muted">Berlaku sampai {new Date(quote.expires).toLocaleTimeString("id-ID")}.</p></div><div className="modal-actions"><Button disabled={busy} onClick={()=>setQuote(null)}>Batal</Button><Button className="primary" busy={busy} onClick={()=>void perform(async()=>{await api("quotes/"+quote.id+"/approve",{});setQuote(null);await refresh();setNotice("Permintaan disetujui. Muat ulang episode untuk melihat hasil terbaru.");})}>Setujui permintaan</Button></div></Modal>}
-    {pending&&<Modal title="Perubahan belum disimpan" close={()=>setPending(null)}><p>Simpan isi editor sebelum berpindah, atau tinggalkan perubahan yang belum disimpan.</p><div className="modal-actions"><Button onClick={()=>setPending(null)}>Kembali ke editor</Button><Button onClick={()=>{setDirty(false);history.pushState(null,"",workspaceUrl(pending));setLocation(pending);setPending(null);}}>Tinggalkan perubahan</Button></div></Modal>}
-  </div>;
+  if(!user)return <div className="signin-page"><div className="signin-brand"><img src="/logo.svg" alt="" width={26} height={26}/><span>Restard Studio</span></div><form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void perform(async()=>{const result=await api<{user:{email:string}}>("login",{email:f.get("email"),password:f.get("password")});setUser(result.user);await refresh();});}}><span className="eyebrow">PRIVATE WORKSPACE</span><h1>Selamat datang kembali.</h1><p>Channel, ide, dan produksi—dalam satu tempat.</p><label>Email<input name="email" type="email" autoComplete="username" required autoFocus/></label><label>Password<input name="password" type="password" autoComplete="current-password" required/></label>{error&&<p role="alert" className="danger-text">{error}</p>}<Button type="submit" className="primary" busy={busy}>Masuk<ArrowRight size={15}/></Button></form></div>;
+  const currentView = location.view;
+  const wide = !!location.episode || currentView === "studio" || currentView === "assets";
+  return (
+    <div className="faceless-app">
+      <AppSidebar
+        view={currentView}
+        go={view => go({ view, channel: view === "studio" ? location.channel : "" })}
+        workerOnline={!!data?.workers.some(workerOnline)}
+        busy={busy}
+        email={user.email}
+        refresh={() => void perform(refresh)}
+        logout={() =>
+          void perform(async () => {
+            await api("logout", {});
+            setUser(null);
+            setData(null);
+          })
+        }
+      />
+      <main
+        className={
+          "workspace-main" +
+          (wide ? " workspace-main-wide" : "") +
+          (location.episode ? " workspace-main-episode" : "") +
+          (currentView === "studio" && location.channel && !location.episode
+            ? " workspace-main-studio"
+            : "")
+        }
+      >
+        {error && (
+          <div className="workspace-message error-message" role="alert">
+            <span>{error}</span>
+            <button className="icon-button" aria-label="Tutup pesan" onClick={() => setError("")}>
+              <X size={14} />
+            </button>
+          </div>
+        )}
+        {notice && <div className="workspace-message" role="status">{notice}</div>}
+        {!data ? (
+          <div className="workspace-loading">
+            <p>Data belum dapat dimuat.</p>
+            <Button onClick={() => void perform(refresh)} busy={busy}>
+              Coba lagi
+            </Button>
+          </div>
+        ) : location.episode ? (
+          <EpisodeWorkspace
+            key={location.episode}
+            episode={location.episode}
+            runId={location.run}
+            data={data}
+            busy={busy}
+            perform={perform}
+            refresh={refresh}
+            back={() => go({ view: "studio", channel: location.channel, tab: "assets" })}
+            quote={requestQuote}
+            onDirty={changeDirty}
+          />
+        ) : currentView === "studio" ? (
+          data.channels.some(c => c.id === location.channel) ? (
+            <ProjectStudio
+              key={location.channel}
+              project={location.channel}
+              tab={location.tab || "workflow"}
+              run={location.run}
+              data={data}
+              workspace={workspace}
+              busy={busy}
+              perform={perform}
+              refresh={refresh}
+              navigate={(tab, run = "") => go({ view: "studio", channel: location.channel, tab, run })}
+              back={() => go({ view: "studio", channel: "" })}
+            />
+          ) : (
+            <StudioProjects
+              data={data}
+              workspace={workspace}
+              busy={busy}
+              perform={perform}
+              refresh={refresh}
+              open={id => go({ view: "studio", channel: id, tab: "workflow" })}
+            />
+          )
+        ) : currentView === "foryou" ? (
+          <ForYou
+            workspace={workspace}
+            busy={busy}
+            perform={perform}
+            toStudio={(analyses, prompt) => {
+              try {
+                sessionStorage.setItem("faceless:studio-prompt", prompt);
+                sessionStorage.setItem("faceless:studio-attach", JSON.stringify(analyses));
+              } catch {}
+              go({ view: "studio" });
+            }}
+          />
+        ) : currentView === "assets" ? (
+          <AssetsLibrary
+            data={data}
+            busy={busy}
+            perform={perform}
+            refresh={refresh}
+            create={prompt => {
+              try {
+                sessionStorage.setItem("faceless:studio-prompt", prompt);
+              } catch {}
+              go({ view: "studio" });
+            }}
+          />
+        ) : currentView === "settings" ? (
+          <SettingsPage
+            data={data}
+            busy={busy}
+            perform={perform}
+            refresh={refresh}
+            tab={location.tab}
+          />
+        ) : (
+          <StudioProjects
+            data={data}
+            workspace={workspace}
+            busy={busy}
+            perform={perform}
+            refresh={refresh}
+            open={id => go({ view: "studio", channel: id, tab: "workflow" })}
+          />
+        )}
+      </main>
+      {quote&&<Modal title="Review permintaan" close={()=>{if(!busy)setQuote(null);}}><div className="quote-summary"><p>{quote.operation.replaceAll("_"," ")} · {quote.provider}</p><strong>{quote.currency==="USD"?money(quote.est_cost):quote.units+" credits"}</strong><p className="muted">{quote.note}</p><p className="muted">Berlaku sampai {new Date(quote.expires).toLocaleTimeString("id-ID")}.</p></div><div className="modal-actions"><Button disabled={busy} onClick={()=>setQuote(null)}>Batal</Button><Button className="primary" busy={busy} onClick={()=>void perform(async()=>{await api("quotes/"+quote.id+"/approve",{});setQuote(null);await refresh();setNotice("Permintaan disetujui. Muat ulang episode untuk melihat hasil terbaru.");})}>Setujui permintaan</Button></div></Modal>}
+      {pending&&<Modal title="Perubahan belum disimpan" close={()=>setPending(null)}><p>Simpan isi editor sebelum berpindah, atau tinggalkan perubahan yang belum disimpan.</p><div className="modal-actions"><Button onClick={()=>setPending(null)}>Kembali ke editor</Button><Button onClick={()=>{setDirty(false);history.pushState(null,"",workspaceUrl(pending));setLocation(pending);setPending(null);}}>Tinggalkan perubahan</Button></div></Modal>}
+    </div>
+  );
 }

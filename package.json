@@ -19,6 +19,8 @@
     "test:code-render": "tsx scripts/test-code-render.mts",
     "test:operations": "node --test scripts/test-operations.mjs scripts/test-backup-native.mjs scripts/test-retention.mjs",
     "setup:local": "node scripts/setup-local.mjs",
+    "n8n:proxy": "node scripts/n8n-proxy.mjs",
+    "dsh:proxy": "node scripts/dsh-proxy.mjs",
     "dev:db": "node --env-file-if-exists=.env scripts/pocketbase.mjs",
     "check": "npm run typecheck && npm test && npm run build"
   },

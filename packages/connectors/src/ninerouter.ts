@@ -16,7 +16,7 @@ export class NineRouterConnector {
   async chat(model: string, messages: ChatMessage[], maxTokens: number) {
     const response = await fetch(this.endpoint("/chat/completions"), {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.key}` },
-      body: JSON.stringify({ model, messages, max_tokens: maxTokens, stream: false }), signal: AbortSignal.timeout(180_000)
+      body: JSON.stringify({ model, messages, max_tokens: maxTokens, stream: false }), signal: AbortSignal.timeout(600_000)
     });
     if (!response.ok) throw new Error(`9Router generation failed (${response.status}). This request was not retried.`);
     const result = await response.json() as { choices?: { message?: { content?: string } }[]; usage?: unknown };

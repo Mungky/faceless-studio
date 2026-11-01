@@ -68,7 +68,7 @@ const WorkflowCard = memo(function WorkflowCard({ data, selected, isConnectable 
       {node.kind === "brief" && <LockKeyhole className="workflow-root-lock" size={12} aria-label="Required starting node" />}
     </div>
     {warning && state?.status !== "completed" && <span className="workflow-node-warning" title={warning}><CircleAlert size={11} />Belum siap</span>}
-    <p className="workflow-node-preview">{node.kind === "reference" ? `${referenceLabels[node.reference?.type || "link"]} · ${node.reference?.name || node.reference?.url || "Belum diisi"}` : node.instructions.trim() || workflowNodeInfo[node.kind].description}</p>
+    <p className="workflow-node-preview">{node.kind === "reference" ? `${referenceLabels[node.reference?.type || "link"]} · ${node.reference?.url || (node.reference?.content ? `${node.reference.content.length.toLocaleString("id-ID")} karakter` : "Belum diisi")}` : node.instructions.trim() || workflowNodeInfo[node.kind].description}</p>
     <div className="workflow-node-footer">
       {readOnly ? <span className={`workflow-node-status workflow-status-${state?.status || "idle"}`}><StatusIcon size={11} className={state?.status === "running" ? "spin" : undefined} />{statusLabels[state?.status || "idle"]}</span>
         : <span>{node.kind === "reference" ? <><BookMarked size={11} />Input referensi</> : node.review || node.kind === "review" ? <><ShieldCheck size={11} />Human review</> : <><ArrowRight size={11} />{node.kind === "brief" ? "Workflow input" : "Connected stage"}</>}</span>}
