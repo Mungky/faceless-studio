@@ -1,6 +1,6 @@
 import { test, mock, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { registerHooks } from "node:module";
@@ -15,7 +15,7 @@ async function fixture(t: TestContext) {
   const { db } = await import("../apps/web/src/server/pocketbase");
   const { defaultChannelPreferences } = await import("../packages/core/src/workspace");
   const vault = await mkdtemp(path.join(os.tmpdir(), "assistant-threads-")); await mkdir(path.join(vault, "Arthur"), { recursive: true });
-  const seen: { system: string[]; sizes: number[] } = { system: [], sizes: [] };
+  const seen: { system: string[]; sizes: number[]; tokens: unknown[] } = { system: [], sizes: [], tokens: [] };
   const tables = new Map<string, Map<string, any>>(); let sequence = 0;
   const table = (name: string) => { if (!tables.has(name)) tables.set(name, new Map()); return tables.get(name)!; };
   table("channels").set(CHANNEL, { id: CHANNEL, name: "Arthur" });
@@ -50,9 +50,18 @@ async function fixture(t: TestContext) {
       const body = JSON.parse(init.body), messages = body.messages as any[], users = messages.filter(m => m.role === "user");
       // Housekeeping call (summary of an old chat): a plain, non-streaming answer.
       if (body.stream === false) return new Response(JSON.stringify({ choices: [{ message: { content: "<think>x</think>RINGKASAN: pemilik melarang node If dan Wait." } }] }), { status: 200 });
-      seen.system.push(String(messages[0].content)); seen.sizes.push(messages.length);
-      const followUp = String(users.at(-1).content).startsWith("[Sistem]");
+      seen.system.push(String(messages[0].content)); seen.sizes.push(messages.length); seen.tokens.push(body.max_tokens);
+      const followUp = String(users.at(-1).content).startsWith("[Sistem] Hasil aksi");
       const who = [...users.map(m => String(m.content)).join("\n").matchAll(/kerjakan (\w)/g)].at(-1)![1];
+      // Misbehaving models: only reasoning came back (E once, Z always), or the answer sits in an unclosed <think> (T).
+      const done = (reason: string) => `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: reason }] })}\n\n`;
+      const plain = (text: string) => new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(text + "data: [DONE]\n\n")); c.close(); } }), { status: 200 });
+      if (!followUp) {
+        const nudged = String(users.at(-1).content).includes("Jawabanmu sebelumnya kosong");
+        if (who === "Z" || (who === "E" && !nudged)) return plain(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "Saya menimbang permintaan ini…" } }] })}\n\n` + done("length"));
+        if (who === "E") return plain(sse("Sudah saya kerjakan.") + done("stop"));
+        if (who === "T") return plain(sse("<think>menimbang… ```json\n" + JSON.stringify({ actions: [{ action: "save_memory", note: "Dari dalam think" }] }) + "\n```") + done("stop"));
+      }
       const encoder = new TextEncoder();
       return new Response(new ReadableStream({ async start(controller) {
         init.signal?.addEventListener("abort", () => controller.error(new DOMException("aborted", "AbortError")));
@@ -140,6 +149,38 @@ test("standing rules and project memory from the vault reach every turn", async 
     assert.match(prompt, /MEMORI PROJECT[\s\S]*Jadwal Arthur jam 19\.00 WIB\./);
     assert.match(prompt, /UBAH SESEDIKIT MUNGKIN/);
   }
+});
+
+test("an answer that is only reasoning is asked for again, never saved as an empty reply", async t => {
+  const f = await fixture(t), { api } = f, c = await api.createThread(CHANNEL);
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan E" });
+  await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "the run to finish");
+  const done = await api.getThread(CHANNEL, c.id);
+  assert.deepEqual(done.messages.map((m: any) => [m.role, m.content]), [["user", "kerjakan E"], ["assistant", "Sudah saya kerjakan."]]);
+  assert.equal(f.seen.system.length, 2, "one retry after the empty answer");
+  assert.ok(f.seen.tokens.every(n => n === 16000), "the model is given room to answer");
+});
+
+test("a model that never answers ends with a visible reason, and the next message is not confused", async t => {
+  const f = await fixture(t), { api } = f, c = await api.createThread(CHANNEL);
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan Z" });
+  await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "the run to finish");
+  const done = await api.getThread(CHANNEL, c.id);
+  assert.deepEqual(done.messages.map((m: any) => m.role), ["user", "system"], "no empty assistant message is kept");
+  assert.match(done.messages[1].content, /tanpa jawaban \(alasan: length\)/);
+  const before = f.seen.sizes.length;
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan A" });
+  await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "the next run");
+  assert.ok(f.seen.sizes.length > before);
+});
+
+test("an action written inside an unclosed think block still runs", async t => {
+  const f = await fixture(t), { api } = f, c = await api.createThread(CHANNEL);
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan T" });
+  await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "the run to finish");
+  const done = await api.getThread(CHANNEL, c.id);
+  assert.equal(done.messages.find((m: any) => m.actions?.length)?.actions[0].action, "save_memory");
+  assert.match(await readFile(path.join(f.vault, "Arthur", "MEMORI-ASSISTANT.md"), "utf8"), /Dari dalam think/);
 });
 
 test("a long chat is folded into a summary and the assistant keeps its thread", async t => {
