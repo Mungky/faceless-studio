@@ -18,7 +18,7 @@ export type ChatMessage={id:string;role:"user"|"assistant"|"system";content:stri
 // summary folds the first `summarized` messages of a long chat into a few lines the model still sees.
 export type Thread={id:string;channel:string;title:string;status:"idle"|"running";messages:ChatMessage[];snapshots:Snapshot[];notice?:string;summary?:string;summarized?:number;created:string;updated:string};
 
-const MAX_ROUNDS=8,MAX_CONCURRENT=6,DEFAULT_TITLE="Chat baru";
+const MAX_ROUNDS=8,MAX_CONCURRENT=6,DEFAULT_TITLE="Chat baru",MAX_OUTPUT_TOKENS=16_000,MAX_ATTACHED_TEXT=30_000;
 type Live={ctl:AbortController;partial?:{content:string;think:string}};
 // Kept on globalThis so a dev-server reload does not forget which chats are running.
 const shared=globalThis as unknown as {__assistantLive?:Map<string,Live>;__assistantLocks?:Map<string,Promise<unknown>>};
@@ -93,7 +93,7 @@ export async function sendMessage(channel:string,id:string,input:{content?:strin
   const controller=new AbortController();live.set(id,{ctl:controller});
   try{
     // Only small pictures and document text are kept in the saved chat; the run itself sees them in full.
-    const stored=fresh.map(a=>({name:a.name.slice(0,120),type:a.type.slice(0,80),...(a.text?{text:a.text.slice(0,8000)}:{}),...(a.url&&a.url.length<150_000?{url:a.url}:{})}));
+    const stored=fresh.map(a=>({name:a.name.slice(0,120),type:a.type.slice(0,80),...(a.text?{text:a.text.length>MAX_ATTACHED_TEXT?a.text.slice(0,MAX_ATTACHED_TEXT)+`\n[…dipotong; dokumen aslinya ${a.text.length} karakter]`:a.text}:{}),...(a.url&&a.url.length<150_000?{url:a.url}:{})}));
     const saved=await patch(channel,id,t=>{
       t.status="running";t.notice="";
       if(t.title===DEFAULT_TITLE&&content)t.title=content.replace(/\s+/g," ").slice(0,48);
@@ -155,7 +155,7 @@ function resultText(actions:ActionResult[]|undefined,full:boolean){
   if(!actions?.length)return "";
   return "\n\n[Hasil aksi]\n"+actions.map(a=>`- ${a.action}: ${a.ok?"berhasil":"GAGAL"} — ${a.message}${a.data?`\n  data: ${full?a.data:a.data.slice(0,1500)}`:""}`).join("\n");
 }
-function modelMessages(thread:Thread,fresh:Attachment[],extra:string){
+function modelMessages(thread:Thread,fresh:Attachment[],extra:string,tail=""){
   const list=thread.messages.slice(thread.summarized||0).filter(m=>m.role!=="system").slice(-40),lastUser=[...list].reverse().find(m=>m.role==="user"),out:Record<string,unknown>[]=[];
   list.forEach((m,index)=>{
     if(m.role==="user"){
@@ -163,19 +163,24 @@ function modelMessages(thread:Thread,fresh:Attachment[],extra:string){
       if(m===lastUser&&extra)text+=extra;
       const images=(m===lastUser&&fresh.length?fresh:m.attachments||[]).filter(a=>a.type?.startsWith("image/")&&a.url);
       out.push(images.length?{role:"user",content:[{type:"text",text},...images.map(a=>({type:"image_url",image_url:{url:a.url}}))]}:{role:"user",content:text});
-    }else out.push({role:"assistant",content:(m.content||"(menjalankan aksi)")+resultText(m.actions,index>=list.length-2)});
+    // An empty reply with no actions says nothing; showing it back as a placeholder only confuses the model.
+    }else if(m.content||m.actions?.length)out.push({role:"assistant",content:(m.content||"(menjalankan aksi)")+resultText(m.actions,index>=list.length-2)});
   });
   const last=list.at(-1);
   if(last?.role==="assistant"&&last.actions?.length)out.push({role:"user",content:"[Sistem] Hasil aksi ada di atas. Kalau permintaan terakhir pemilik sudah terpenuhi, berhenti dan laporkan hasilnya. Lanjutkan hanya langkah yang jelas diminta pemilik; jangan menambah atau mengubah hal lain, dan jangan mengulang aksi yang sudah berhasil."});
+  if(tail)out.push({role:"user",content:tail});
   return out;
 }
 
 async function stream(messages:Record<string,unknown>[],signal:AbortSignal,state:Live){
   const {url,apiKey}=await routerAuth();if(!url)throw new Error("9Router belum dikonfigurasi.");
-  const response=await fetch(url.replace(/\/+$/,"")+"/chat/completions",{method:"POST",headers:{"Content-Type":"application/json",...(apiKey?{Authorization:"Bearer "+apiKey}:{})},body:JSON.stringify({model:"faceless-creation",messages,stream:true}),signal:AbortSignal.any([signal,AbortSignal.timeout(600_000)])});
+  // A reasoning model can spend a small default limit on thinking and answer nothing, so ask for room.
+  const open=(extra:object)=>fetch(url.replace(/\/+$/,"")+"/chat/completions",{method:"POST",headers:{"Content-Type":"application/json",...(apiKey?{Authorization:"Bearer "+apiKey}:{})},body:JSON.stringify({model:"faceless-creation",messages,stream:true,...extra}),signal:AbortSignal.any([signal,AbortSignal.timeout(600_000)])});
+  let response=await open({max_tokens:MAX_OUTPUT_TOKENS});
+  if(response.status===400)response=await open({}); // some models reject an explicit limit
   if(!response.ok)throw new Error(`9Router ${response.status}: ${(await response.text().catch(()=>"")).slice(0,300)}`);
   const reader=response.body?.getReader();if(!reader)throw new Error("9Router tidak mengirim jawaban.");
-  const decoder=new TextDecoder(),partial=state.partial={content:"",think:""};let buffer="",thinking=false;
+  const decoder=new TextDecoder(),partial=state.partial={content:"",think:""};let buffer="",thinking=false,finish="";
   const add=(chunk:string)=>{
     let rest=chunk;
     while(rest){
@@ -191,10 +196,10 @@ async function stream(messages:Record<string,unknown>[],signal:AbortSignal,state
     buffer+=decoder.decode(value,{stream:true});const lines=buffer.split("\n");buffer=lines.pop()||"";
     for(const line of lines){
       const text=line.trim();if(!text.startsWith("data: ")||text==="data: [DONE]")continue;
-      try{const delta=JSON.parse(text.slice(6)).choices?.[0]?.delta;if(!delta)continue;if(delta.reasoning_content)partial.think+=delta.reasoning_content;if(delta.content)add(delta.content);}catch{/* a half chunk: ignore */}
+      try{const choice=JSON.parse(text.slice(6)).choices?.[0];if(choice?.finish_reason)finish=String(choice.finish_reason);const delta=choice?.delta;if(!delta)continue;if(delta.reasoning_content)partial.think+=delta.reasoning_content;if(delta.content)add(delta.content);}catch{/* a half chunk: ignore */}
     }
   }
-  return {...partial};
+  return {...partial,finish};
 }
 
 async function run(channel:string,id:string,fresh:Attachment[],controller:AbortController){
@@ -207,10 +212,21 @@ async function run(channel:string,id:string,fresh:Attachment[],controller:AbortC
     const latest=[...first.messages].reverse().find(m=>m.role==="user");let extra="";
     const urls=extractUrls(latest?.content||"").slice(0,3);
     if(urls.length){const pages=(await Promise.all(urls.map(fetchUrlContext))).filter(Boolean);if(pages.length)extra+="\n\n--- [Isi link yang dikirim pemilik] ---\n"+pages.map(p=>`Link: ${p!.url}\nJudul: ${p!.title}\nKeterangan: ${p!.description||""}\nKonten: ${p!.content||""}`).join("\n\n")+"\n--- [Akhir link] ---";}
+    let nudge="",retried=false;
     for(let round=0;round<MAX_ROUNDS&&!controller.signal.aborted;round++){
       const thread=await read(channel,id);
-      const out=await stream([{role:"system",content:await systemPrompt(channel,ctx.workflowId,thread.summary||"")},...modelMessages(thread,fresh,extra)],controller.signal,state);
-      const {visible,actions}=extractActions(out.content),results:ActionResult[]=[];
+      const out=await stream([{role:"system",content:await systemPrompt(channel,ctx.workflowId,thread.summary||"")},...modelMessages(thread,fresh,extra,nudge)],controller.signal,state);
+      nudge="";
+      let {visible,actions}=extractActions(out.content);const results:ActionResult[]=[];
+      // Some models write their whole answer inside a <think> block they never close; the actions are still there.
+      if(!visible&&!actions.length&&out.think)actions=extractActions(out.think).actions;
+      if(!visible&&!actions.length&&!controller.signal.aborted){
+        // Only reasoning came back. Ask once more for a real answer; never save an empty reply.
+        state.partial=undefined;
+        if(!retried){retried=true;nudge="[Sistem] Jawabanmu sebelumnya kosong (hanya proses berpikir, tanpa jawaban). Jawab sekarang tanpa berpikir panjang: tulis penjelasan singkat untuk pemilik, lalu blok json aksi bila perlu.";continue;}
+        await patch(channel,id,t=>{t.messages.push({id:randomUUID(),role:"system",content:`Model berhenti tanpa jawaban (alasan: ${out.finish||"tidak diketahui"}). Kemungkinan jawabannya habis di proses berpikir atau terpotong batas token. Kirim ulang pesan, perkecil lampiran, atau minta dalam langkah lebih kecil.`,created_at:now()});});
+        return;
+      }
       for(const action of actions){
         if(controller.signal.aborted)break;
         const outcome=await runTool(ctx,action);
