@@ -1,0 +1,230 @@
+import "server-only";
+import {randomUUID} from "node:crypto";
+import path from "node:path";
+import {existsSync,readFileSync} from "node:fs";
+import {recordId,type Channel} from "@studio/core";
+import {db} from "./pocketbase";
+import {channelPreferences,saveWorkspace,workspaceRecord,workspaceRows} from "./workspace";
+import {routerAuth} from "./provider-credentials";
+import {extractUrls,fetchUrlContext} from "./url-context";
+import {runTool,describeWorkflow,type Snapshot,type ToolContext} from "./assistant-tools";
+
+// The project assistant. Each chat is a record in the database and runs on the server, so a refresh
+// or a closed tab changes nothing and several chats can work at the same time.
+export type Attachment={name:string;type:string;url?:string;text?:string};
+export type ActionResult={action:string;ok:boolean;message:string;explanation?:string;data?:string};
+export type ChatMessage={id:string;role:"user"|"assistant"|"system";content:string;think?:string;attachments?:Attachment[];actions?:ActionResult[];created_at:string};
+export type Thread={id:string;channel:string;title:string;status:"idle"|"running";messages:ChatMessage[];snapshots:Snapshot[];notice?:string;created:string;updated:string};
+
+const MAX_ROUNDS=8,MAX_CONCURRENT=6,DEFAULT_TITLE="Chat baru";
+type Live={ctl:AbortController;partial?:{content:string;think:string}};
+// Kept on globalThis so a dev-server reload does not forget which chats are running.
+const shared=globalThis as unknown as {__assistantLive?:Map<string,Live>;__assistantLocks?:Map<string,Promise<unknown>>};
+const live=(shared.__assistantLive??=new Map<string,Live>());
+const locks=(shared.__assistantLocks??=new Map<string,Promise<unknown>>());
+async function serial<T>(key:string,fn:()=>Promise<T>):Promise<T>{
+  const prior=locks.get(key)||Promise.resolve(),next=prior.catch(()=>undefined).then(fn);locks.set(key,next);
+  try{return await next;}finally{if(locks.get(key)===next)locks.delete(key);}
+}
+
+const keyOf=(channel:string,id:string)=>`assistant:${channel}:${id}`;
+const threadId=(id:string)=>{if(!/^[a-f0-9-]{36}$/.test(id))throw new Error("Chat tidak valid.");return id;};
+const now=()=>new Date().toISOString();
+// A chat saved as "running" while no run is alive here was cut off by a restart.
+function settle(thread:Thread){if(thread.status==="running"&&!live.has(thread.id)){thread.status="idle";thread.notice="Proses terputus karena server dimulai ulang. Kirim pesan untuk melanjutkan.";}return thread;}
+async function read(channel:string,id:string){const row=await workspaceRecord<Thread>(keyOf(channel,threadId(id)));if(!row)throw new Error("Chat tidak ditemukan.");return settle(row.data);}
+async function write(thread:Thread){thread.updated=now();await saveWorkspace(keyOf(thread.channel,thread.id),"assistant",thread.channel,thread);}
+const patch=(channel:string,id:string,change:(thread:Thread)=>void)=>serial(keyOf(channel,id),async()=>{const thread=await read(channel,id);change(thread);await write(thread);return thread;});
+
+// ---- Action blocks: ```json {"actions":[...]} ``` at the end of a reply ----
+const BLOCK=/```(?:json)?\s*(\{[\s\S]*?\})\s*```/gi;
+function parseActions(json:string){
+  try{
+    const value=JSON.parse(json);const list=Array.isArray(value.actions)?value.actions:typeof value.action==="string"?[value]:null;
+    return list&&list.length&&list.every((a:unknown)=>a&&typeof (a as {action?:unknown}).action==="string")?list as Record<string,any>[]:null;
+  }catch{return null;}
+}
+function extractActions(text:string){
+  const actions:Record<string,any>[]=[];
+  const visible=text.replace(BLOCK,(whole,json:string)=>{const list=parseActions(json);if(!list)return whole;actions.push(...list);return "";}).trim();
+  return {visible,actions:actions.slice(0,12)};
+}
+// While a reply is still streaming, hide action blocks (finished or half-written).
+const strip=(text:string)=>text.replace(BLOCK,(whole,json:string)=>parseActions(json)?"":whole).replace(/```(?:json)?\s*\{[^`]*$/i,"").trim();
+
+const publicActions=(actions?:ActionResult[])=>actions?.map(({data:_data,...rest})=>rest);
+function view(thread:Thread){
+  const {snapshots,...rest}=thread,messages:ChatMessage[]=thread.messages.map(m=>({...m,actions:publicActions(m.actions)}));
+  const partial=live.get(thread.id)?.partial;
+  if(partial&&(partial.content||partial.think))messages.push({id:"live",role:"assistant",content:strip(partial.content),think:partial.think,created_at:now()});
+  return {...rest,messages,undo:snapshots.length};
+}
+
+// ---- Public API ----
+export async function listThreads(channel:string){
+  recordId.parse(channel);
+  return (await workspaceRows<Thread>(channel,"assistant")).map(r=>settle(r.data)).sort((a,b)=>b.updated.localeCompare(a.updated)).map(t=>({id:t.id,title:t.title,status:t.status,updated:t.updated,count:t.messages.length}));
+}
+export async function createThread(channel:string,title?:string){
+  recordId.parse(channel);await db.get<Channel>("channels",channel);
+  const thread:Thread={id:randomUUID(),channel,title:(title||DEFAULT_TITLE).slice(0,80),status:"idle",messages:[],snapshots:[],created:now(),updated:now()};
+  await write(thread);return view(thread);
+}
+export async function getThread(channel:string,id:string){recordId.parse(channel);return view(await read(channel,id));}
+export async function renameThread(channel:string,id:string,title:string){recordId.parse(channel);return view(await patch(channel,id,t=>{t.title=title.trim().slice(0,80)||t.title;}));}
+export async function stopThread(channel:string,id:string){
+  recordId.parse(channel);threadId(id);live.get(id)?.ctl.abort();
+  return view(await read(channel,id));
+}
+export async function deleteThread(channel:string,id:string){
+  recordId.parse(channel);threadId(id);live.get(id)?.ctl.abort();
+  const row=await workspaceRecord<Thread>(keyOf(channel,id));if(row)await db.delete("workspace_records",row.id);
+  return {deleted:id};
+}
+
+export async function sendMessage(channel:string,id:string,input:{content?:string;attachments?:Attachment[]}){
+  recordId.parse(channel);threadId(id);
+  const content=String(input.content||"").trim().slice(0,20_000),fresh=(input.attachments||[]).slice(0,6);
+  if(!content&&!fresh.length)throw new Error("Tulis pesan atau lampirkan berkas.");
+  if(live.has(id))throw new Error("Assistant masih bekerja di chat ini. Tunggu selesai, tekan Stop, atau buka chat baru untuk pekerjaan lain.");
+  if(live.size>=MAX_CONCURRENT)throw new Error(`Sudah ada ${MAX_CONCURRENT} chat yang berjalan bersamaan. Tunggu salah satu selesai atau hentikan.`);
+  const controller=new AbortController();live.set(id,{ctl:controller});
+  try{
+    // Only small pictures and document text are kept in the saved chat; the run itself sees them in full.
+    const stored=fresh.map(a=>({name:a.name.slice(0,120),type:a.type.slice(0,80),...(a.text?{text:a.text.slice(0,8000)}:{}),...(a.url&&a.url.length<150_000?{url:a.url}:{})}));
+    const saved=await patch(channel,id,t=>{
+      t.status="running";t.notice="";
+      if(t.title===DEFAULT_TITLE&&content)t.title=content.replace(/\s+/g," ").slice(0,48);
+      t.messages.push({id:randomUUID(),role:"user",content,attachments:stored,created_at:now()});
+    });
+    void run(channel,id,fresh,controller);
+    return view(saved);
+  }catch(error){live.delete(id);throw error;}
+}
+
+// ---- The agent loop ----
+async function systemPrompt(channel:string,workflowId:string){
+  const [project,prefs]=await Promise.all([db.get<Channel>("channels",channel),channelPreferences(channel)]);
+  const name=(prefs.project_name||project.name).trim();
+  let custom="";
+  for(const file of ["system.md","SYSTEM.md","AGENTS.md"]){const p=path.join(path.resolve(process.cwd(),"projects",name),file);if(existsSync(p)){try{custom=readFileSync(p,"utf8");break;}catch{/* unreadable file: skip */}}}
+  return `Kamu adalah asisten dan arsitek workflow untuk project "${name}" di Restard Studio (konten video faceless). Kamu punya AKSES PENUH ke workflow n8n project ini dan bekerja langsung: aksi yang kamu tulis dijalankan otomatis, tanpa tombol persetujuan.
+
+CARA KERJA
+- Jawab dalam Bahasa Indonesia, ringkas dan jujur. Kalau perlu bertindak, tutup pesan dengan SATU blok kode json: {"actions":[{...},{...}]}. Aksi dijalankan berurutan, hasilnya dikirim kembali kepadamu, lalu kamu lanjut sampai selesai (paling banyak ${MAX_ROUNDS} langkah per pesan pemilik).
+- Kalau kurang yakin, baca dulu (get_workflow, list_executions, get_execution) sebelum mengubah. Sesudah mengubah, periksa hasilnya bila bisa, lalu laporkan apa yang berhasil dan apa yang gagal. Jangan mengarang hasil.
+- Setiap perubahan dicadangkan otomatis; undo_last_change mengembalikan perubahan terakhir. Kerjakan langsung hal yang jelas diminta. Tanyakan dulu hanya kalau permintaannya ambigu atau akan membuang sebagian besar workflow.
+- Credential dan API key dibuat pemilik sendiri di n8n. Kamu hanya memilih credential yang sudah ada (list_credentials). Jangan menulis kunci rahasia di workflow atau di chat.
+- Chat lain bisa mengubah workflow yang sama. Baca ulang kalau ragu soal keadaan terbaru.
+
+AKSI (isi "action" dengan salah satu nama ini; tambahkan "explanation" singkat bila berguna)
+- get_workflow: baca JSON lengkap workflow.
+- replace_workflow {name?, nodes:[...], connections:{...}, settings?}: ganti seluruh isi workflow (format JSON n8n).
+- add_n8n_node {name, node_type:"n8n-nodes-base.xxx", typeVersion?, parameters?, credentials?, position?, connect_from?, connect_to?, connection_type?:"main"|"ai_languageModel"|...}
+- modify_n8n_node {node_name, new_name?, parameters? (digabung), set_parameters? (diganti seluruhnya), prompt? (teks prompt node AI), credentials?, disabled?, position?, typeVersion?}
+- remove_n8n_node {node_name}
+- connect_nodes {from, to, connection_type?, output?, input?} dan disconnect_nodes {from, to, connection_type?}
+- rename_workflow {name}
+- publish_n8n_workflow {active:true|false}
+- execute_n8n_workflow {brief, title}: jalankan lewat webhook; hasilnya eksekusi baru. Beberapa eksekusi boleh berjalan bersamaan.
+- list_executions {limit?}, get_execution {execution_id}, stop_execution {execution_id}
+- list_credentials
+- rebuild_from_recipe {name?}: bangun ulang workflow dari resep Studio (membuatnya bila belum ada). Ini mengganti seluruh isi workflow, jadi hanya jika diminta.
+- undo_last_change
+
+ATURAN WORKFLOW STUDIO (agar task di Studio tetap jalan)
+- Task Studio memicu webhook "Mulai dari Studio" (POST, responseMode: responseNode) dan membaca hasil per tahap dari NAMA node. Jangan menghapus atau mengganti nama "Mulai dari Studio", "Balas ke Studio" (Respond to Webhook yang mengirim execution_id) dan "Resep Studio" (Set: instructions, references, brief).
+- Satu tahap = node chainLlm bernama tahap itu + node "Model · <tahap>" (lmChatOpenAi, model "faceless-creation", tersambung ke tahap lewat ai_languageModel).
+- Tahap dengan review = "Review siap · X" (Set: draft, resume_url) → "Review · X" (Wait, resume webhook) → "Disetujui? · X" (If; cabang salah kembali ke tahap X). Ikuti pola yang sama untuk tahap baru yang hasilnya perlu muncul di Studio.
+- Node lain (HTTP Request, Code, dll.) bebas ditambahkan di antara tahap.
+
+${custom?`PANDUAN PROJECT (system.md):\n${custom}\n\n`:""}KEADAAN WORKFLOW SEKARANG
+${await describeWorkflow(workflowId)}`;
+}
+
+function resultText(actions:ActionResult[]|undefined,full:boolean){
+  if(!actions?.length)return "";
+  return "\n\n[Hasil aksi]\n"+actions.map(a=>`- ${a.action}: ${a.ok?"berhasil":"GAGAL"} — ${a.message}${a.data?`\n  data: ${full?a.data:a.data.slice(0,1500)}`:""}`).join("\n");
+}
+function modelMessages(thread:Thread,fresh:Attachment[],extra:string){
+  const list=thread.messages.filter(m=>m.role!=="system").slice(-40),lastUser=[...list].reverse().find(m=>m.role==="user"),out:Record<string,unknown>[]=[];
+  list.forEach((m,index)=>{
+    if(m.role==="user"){
+      let text=m.content;for(const a of m.attachments||[])if(a.text)text+=`\n\n--- [Lampiran: ${a.name}] ---\n${a.text}`;
+      if(m===lastUser&&extra)text+=extra;
+      const images=(m===lastUser&&fresh.length?fresh:m.attachments||[]).filter(a=>a.type?.startsWith("image/")&&a.url);
+      out.push(images.length?{role:"user",content:[{type:"text",text},...images.map(a=>({type:"image_url",image_url:{url:a.url}}))]}:{role:"user",content:text});
+    }else out.push({role:"assistant",content:(m.content||"(menjalankan aksi)")+resultText(m.actions,index>=list.length-2)});
+  });
+  const last=list.at(-1);
+  if(last?.role==="assistant"&&last.actions?.length)out.push({role:"user",content:"[Sistem] Hasil aksi ada di atas. Lanjutkan kalau masih ada langkah, atau jelaskan hasilnya kepada pemilik. Jangan mengulang aksi yang sudah berhasil."});
+  return out;
+}
+
+async function stream(messages:Record<string,unknown>[],signal:AbortSignal,state:Live){
+  const {url,apiKey}=await routerAuth();if(!url)throw new Error("9Router belum dikonfigurasi.");
+  const response=await fetch(url.replace(/\/+$/,"")+"/chat/completions",{method:"POST",headers:{"Content-Type":"application/json",...(apiKey?{Authorization:"Bearer "+apiKey}:{})},body:JSON.stringify({model:"faceless-creation",messages,stream:true}),signal:AbortSignal.any([signal,AbortSignal.timeout(600_000)])});
+  if(!response.ok)throw new Error(`9Router ${response.status}: ${(await response.text().catch(()=>"")).slice(0,300)}`);
+  const reader=response.body?.getReader();if(!reader)throw new Error("9Router tidak mengirim jawaban.");
+  const decoder=new TextDecoder(),partial=state.partial={content:"",think:""};let buffer="",thinking=false;
+  const add=(chunk:string)=>{
+    let rest=chunk;
+    while(rest){
+      const tag=thinking?"</think>":"<think>",at=rest.indexOf(tag);
+      const part=at===-1?rest:rest.slice(0,at);
+      if(part){if(thinking)partial.think+=part;else partial.content+=part;}
+      if(at===-1)break;
+      thinking=!thinking;rest=rest.slice(at+tag.length);
+    }
+  };
+  for(;;){
+    const {done,value}=await reader.read();if(done)break;
+    buffer+=decoder.decode(value,{stream:true});const lines=buffer.split("\n");buffer=lines.pop()||"";
+    for(const line of lines){
+      const text=line.trim();if(!text.startsWith("data: ")||text==="data: [DONE]")continue;
+      try{const delta=JSON.parse(text.slice(6)).choices?.[0]?.delta;if(!delta)continue;if(delta.reasoning_content)partial.think+=delta.reasoning_content;if(delta.content)add(delta.content);}catch{/* a half chunk: ignore */}
+    }
+  }
+  return {...partial};
+}
+
+async function run(channel:string,id:string,fresh:Attachment[],controller:AbortController){
+  const state=live.get(id)!;
+  try{
+    const prefs=await channelPreferences(channel),first=await read(channel,id);
+    const ctx:ToolContext={channel,workflowId:prefs.n8n_workflow_id,snaps:[...first.snapshots]};
+    // Links and documents the owner just sent are read once and shown to the model with that message.
+    const latest=[...first.messages].reverse().find(m=>m.role==="user");let extra="";
+    const urls=extractUrls(latest?.content||"").slice(0,3);
+    if(urls.length){const pages=(await Promise.all(urls.map(fetchUrlContext))).filter(Boolean);if(pages.length)extra+="\n\n--- [Isi link yang dikirim pemilik] ---\n"+pages.map(p=>`Link: ${p!.url}\nJudul: ${p!.title}\nKeterangan: ${p!.description||""}\nKonten: ${p!.content||""}`).join("\n\n")+"\n--- [Akhir link] ---";}
+    for(let round=0;round<MAX_ROUNDS&&!controller.signal.aborted;round++){
+      const thread=await read(channel,id);
+      const out=await stream([{role:"system",content:await systemPrompt(channel,ctx.workflowId)},...modelMessages(thread,fresh,extra)],controller.signal,state);
+      const {visible,actions}=extractActions(out.content),results:ActionResult[]=[];
+      for(const action of actions){
+        if(controller.signal.aborted)break;
+        const outcome=await runTool(ctx,action);
+        results.push({action:String(action.action),ok:outcome.ok,message:outcome.message,...(action.explanation?{explanation:String(action.explanation).slice(0,300)}:{}),...(typeof outcome.data==="string"?{data:outcome.data.slice(0,40_000)}:outcome.data?{data:JSON.stringify(outcome.data).slice(0,40_000)}:{})});
+      }
+      await patch(channel,id,t=>{
+        t.messages.push({id:randomUUID(),role:"assistant",content:controller.signal.aborted?(visible?visible+"\n\n":"")+"_(dihentikan)_":visible,...(out.think?{think:out.think}:{}),...(results.length?{actions:results}:{}),created_at:now()});
+        t.snapshots=ctx.snaps.slice(-10);if(t.messages.length>300)t.messages=t.messages.slice(-300);
+      });
+      state.partial=undefined;
+      if(!actions.length)return;
+      if(round===MAX_ROUNDS-1)await patch(channel,id,t=>{t.messages.push({id:randomUUID(),role:"system",content:`Berhenti setelah ${MAX_ROUNDS} langkah. Tulis "lanjut" untuk meneruskan.`,created_at:now()});});
+    }
+  }catch(error){
+    if(!controller.signal.aborted){
+      const message=(error as Error).message;
+      await patch(channel,id,t=>{t.messages.push({id:randomUUID(),role:"system",content:"Assistant gagal: "+message,created_at:now()});}).catch(()=>undefined);
+    }
+  }finally{
+    // Whatever was half-written when Stop was pressed is kept, then the chat is free again.
+    const partial=state.partial;live.delete(id);
+    await patch(channel,id,t=>{
+      if(controller.signal.aborted&&partial&&(partial.content||partial.think)){const {visible}=extractActions(partial.content);t.messages.push({id:randomUUID(),role:"assistant",content:(visible?visible+"\n\n":"")+"_(dihentikan)_",...(partial.think?{think:partial.think}:{}),created_at:now()});}
+      t.status="idle";t.notice="";
+    }).catch(()=>undefined);
+  }
+}

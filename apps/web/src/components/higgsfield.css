@@ -574,3 +574,22 @@ input,textarea{caret-color:var(--accent)}
 .pj-btn-stop{background:#ef4444;color:#fff}
 .pj-btn-stop:hover{background:#dc2626}
 
+
+/* Project assistant: chat tabs and the log of what it did to the workflow */
+.pj-threads{display:flex;align-items:center;gap:6px;padding:8px 14px;overflow-x:auto;border-bottom:1px solid #242424;scrollbar-width:thin}
+.pj-thread-tab{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;max-width:170px;padding:5px 11px;border:1px solid #2c2c2c;border-radius:999px;background:transparent;color:#a3a3a3;font-size:12px;font-weight:500}
+.pj-thread-tab span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pj-thread-tab:hover{color:#e5e5e5;border-color:#3a3a3a}
+.pj-thread-tab.is-active{color:#111;background:var(--accent,#d4ff2a);border-color:var(--accent,#d4ff2a)}
+.pj-thread-add{display:inline-grid;place-items:center;flex:0 0 auto;width:26px;height:26px;border:1px dashed #3a3a3a;border-radius:999px;background:transparent;color:#a3a3a3}
+.pj-thread-add:hover{color:#e5e5e5;border-color:#5a5a5a}
+.pj-system-note{display:flex;align-items:center;gap:7px;margin:0;padding:6px 10px;border-radius:8px;background:#161616;color:#9a9a9a;font-size:12.5px;line-height:1.5}
+.pj-system-note.is-error{background:rgba(220,70,70,.12);color:#f08a8a}
+.pj-action-log{display:flex;flex-direction:column;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid #242424}
+.pj-action-row{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;line-height:1.45}
+.pj-action-row svg{margin-top:2px}
+.pj-action-row div{display:flex;flex-direction:column;min-width:0}
+.pj-action-row strong{font-weight:600;color:#e5e5e5}
+.pj-action-row span{color:#9a9a9a;overflow-wrap:anywhere}
+.pj-action-row.is-ok svg{color:#7ed957}
+.pj-action-row.is-fail svg,.pj-action-row.is-fail strong{color:#f08a8a}
