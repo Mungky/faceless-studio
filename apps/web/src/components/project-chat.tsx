@@ -62,12 +62,14 @@ interface Msg {
   changes?: Changes;
   canUndo?: boolean;
   learned?: { notes: string[]; rules: string[] };
+  // Only on the reply being written right now: how much has arrived, and whether it is a long action block (hidden from view).
+  progress?: { chars: number; seconds: number; writingActions: boolean };
 }
 // An action waiting for the owner's button; it runs only when approved.
 interface PendingItem {
   id: string;
   reason: string;
-  action: { action?: string; name?: string; node_name?: string; nodes?: { name?: string }[] };
+  action: { action?: string; name?: string; node_name?: string; nodes?: { name?: string }[]; steps?: { action?: string; name?: string; node_name?: string }[]; execution_id?: string };
 }
 type Mode = "cepat" | "seimbang" | "dalam";
 interface ThreadView {
@@ -80,6 +82,7 @@ interface ThreadView {
   undo: number;
   mode?: Mode;
   context?: { used: number; limit: number };
+  build?: string;
 }
 // What the assistant knows about this project (kept in the vault, so it survives closing the app).
 interface MemoryData {
@@ -97,6 +100,8 @@ const hasChanged = (c?: Changes) => !!c && !!(c.added.length || c.removed.length
 function describePending(p: PendingItem) {
   const a = p.action;
   if (a.action === "replace_workflow") return `${a.nodes?.length ?? "?"} node: ${(a.nodes || []).map(n => n.name).filter(Boolean).slice(0, 8).join(", ")}${(a.nodes?.length || 0) > 8 ? "…" : ""}`;
+  if (a.action === "propose_plan") return (a.steps || []).map((s, i) => `${i + 1}. ${ACTION_LABEL[s.action || ""] || s.action}${s.node_name || s.name ? ": " + (s.node_name || s.name) : ""}`).join("\n");
+  if (a.action === "restore_from_execution") return `Dari eksekusi ${a.execution_id ?? "?"}`;
   if (a.action === "add_n8n_node") return `Node baru: ${a.name || "(tanpa nama)"}`;
   return ACTION_LABEL[a.action || ""] || a.action || "";
 }
@@ -105,6 +110,7 @@ interface ThreadRow {
   title: string;
   status: "idle" | "running";
   count: number;
+  pending?: number;
 }
 
 const ACTION_LABEL: Record<string, string> = {
@@ -124,6 +130,11 @@ const ACTION_LABEL: Record<string, string> = {
   list_credentials: "Melihat credential",
   rebuild_from_recipe: "Membangun dari resep Studio",
   set_node_param: "Mengubah satu nilai node",
+  propose_plan: "Menerapkan rencana perubahan",
+  restore_from_execution: "Memulihkan dari eksekusi",
+  list_skills: "Melihat skill",
+  read_skill: "Membaca skill",
+  save_skill: "Menyimpan skill",
   save_memory: "Menyimpan ke memori",
   rewrite_memory: "Merapikan memori",
   save_rule: "Menyimpan aturan tetap",
@@ -162,6 +173,8 @@ export function ProjectChat({
   const [expandedThinks, setExpandedThinks] = useState<Record<string, boolean>>({});
   const [acting, setActing] = useState(false);
   const [panel, setPanel] = useState(false);
+  const [stale, setStale] = useState(false);
+  const buildRef = useRef("");
   const [memory, setMemory] = useState<MemoryData | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -242,6 +255,11 @@ export function ProjectChat({
         ]);
         setThreads(list.threads);
         if (activeRef.current === active) setThread(current);
+        // The server restarts on every deploy; a page opened before that is running old code and may lack newer buttons.
+        if (current.build) {
+          if (buildRef.current && buildRef.current !== current.build) setStale(true);
+          buildRef.current = current.build;
+        }
         setError("");
       } catch (e) {
         if (activeRef.current === active) setError((e as Error).message);
@@ -265,7 +283,7 @@ export function ProjectChat({
   const lastId = thread?.messages.at(-1)?.id;
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [lastId, thread?.messages.at(-1)?.content, thread?.status]);
+  }, [lastId, thread?.messages.at(-1)?.content, thread?.status, thread?.pending?.length]);
 
   const running = thread?.status === "running";
 
@@ -454,6 +472,7 @@ export function ProjectChat({
             onClick={() => select(t.id)}
           >
             {t.status === "running" && <LoaderCircle className="spin" size={11} />}
+            {!!t.pending && <span className="pj-thread-wait" title="Ada aksi yang menunggu izinmu">⏳</span>}
             <span>{t.title}</span>
           </button>
         ))}
@@ -463,6 +482,15 @@ export function ProjectChat({
       </div>
 
       {/* How full the model's context is, how hard it thinks, and a button to fold old messages into the summary. */}
+      {stale && (
+        <div className="pj-stale">
+          Studio baru saja diperbarui. Muat ulang halaman (Ctrl+Shift+R) supaya tombol dan fitur terbaru muncul.
+          <button type="button" className="pj-undo-btn" onClick={() => window.location.reload()}>Muat ulang</button>
+        </div>
+      )}
+      {(thread?.pending?.length || 0) > 0 && (
+        <div className="pj-stale is-wait">⏳ {thread!.pending!.length} aksi menunggu izinmu. Tombol Izinkan ada di bagian bawah percakapan.</div>
+      )}
       <div className="pj-context">
         <span className="pj-context-meter" title={`Perkiraan isi konteks: ${(thread?.context?.used ?? 0).toLocaleString("id-ID")} dari ${(thread?.context?.limit ?? 0).toLocaleString("id-ID")} token. Dipadatkan otomatis di atas 70%.`}>
           <Gauge size={12} /> Konteks {thread?.context ? Math.min(100, Math.round((thread.context.used / thread.context.limit) * 100)) : 0}%
@@ -632,6 +660,12 @@ export function ProjectChat({
                   <div className="pj-markdown-body">{msg.role === "assistant" ? <Markdown text={msg.content} /> : <p className="pj-paragraph">{msg.content}</p>}</div>
                 )}
 
+                {msg.progress && (
+                  <p className="pj-progress">
+                    <LoaderCircle className="spin" size={11} /> Menulis… {msg.progress.chars.toLocaleString("id-ID")} karakter · {msg.progress.seconds} dtk
+                    {msg.progress.writingActions ? " · sedang menyusun aksi (perubahan besar bisa beberapa menit)" : ""}
+                  </p>
+                )}
                 {msg.actions && msg.actions.length > 0 && (
                   <div className="pj-action-log">
                     {msg.actions.map((a, i) => (

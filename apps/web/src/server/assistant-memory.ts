@@ -1,6 +1,6 @@
 import "server-only";
 import path from "node:path";
-import {mkdir,readFile,rename,writeFile} from "node:fs/promises";
+import {mkdir,readdir,readFile,rename,rm,writeFile} from "node:fs/promises";
 import {randomUUID} from "node:crypto";
 import {safeVaultPath} from "./vault";
 
@@ -66,4 +66,16 @@ export async function removeNote(folder:string,kind:NoteKind,needle:unknown){
   const lines=body.split("\n"),kept=lines.filter(l=>!(l.startsWith("- ")&&l.toLowerCase().includes(text)));
   if(kept.length===lines.length)return 0;
   await save(folder,kind,kept.join("\n"));return lines.length-kept.length;
+}
+
+// Before anything overwrites a workflow, a copy goes to the vault (the newest 20 are kept), so the
+// work never lives only inside n8n. Best effort for callers: a failed backup must not hide the real error.
+export async function saveBackup(folder:string,label:string,data:unknown){
+  const stamp=new Date().toISOString().replace(/[:.]/g,"-"),slug=label.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,40)||"cadangan";
+  const relative=`${folder}/Workflow Backup/${stamp}-${randomUUID().slice(0,4)}-${slug}.json`,file=await safeVaultPath(relative,true);
+  await mkdir(path.dirname(file),{recursive:true});
+  const temporary=file+"."+randomUUID()+".tmp";await writeFile(temporary,JSON.stringify(data,null,1),{flag:"wx"});await rename(temporary,file);
+  const names=(await readdir(path.dirname(file))).filter(n=>n.endsWith(".json")).sort();
+  for(const old of names.slice(0,-20))await rm(path.join(path.dirname(file),old),{force:true});
+  return relative;
 }

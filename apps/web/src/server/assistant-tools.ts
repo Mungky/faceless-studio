@@ -3,7 +3,7 @@ import {
   buildN8nWorkflow,getN8nWorkflow,updateN8nWorkflow,activateN8nWorkflow,deactivateN8nWorkflow,triggerN8nWorkflow,
   listN8nExecutions,getN8nExecution,stopN8nExecution,listN8nCredentials
 } from "./n8n";
-import {addNote,replaceMemory} from "./assistant-memory";
+import {addNote,replaceMemory,saveBackup} from "./assistant-memory";
 import {listSkills,readSkill,saveSkill} from "./assistant-skills";
 
 // Everything the project assistant may do to the project's n8n workflow. It acts directly: before each
@@ -18,6 +18,12 @@ export type ToolResult={ok:boolean;message:string;data?:unknown;changed?:boolean
 // "Izinkan" for exactly this action, so the approval gate is skipped.
 export type ToolContext={channel:string;workflowId:string;snaps:Snapshot[];folder?:string;budget?:{adds:number};approved?:boolean};
 export const NODE_ADD_LIMIT=2;
+const PLAN_MAX=40,PLAN_ACTIONS=new Set(["add_n8n_node","modify_n8n_node","remove_n8n_node","connect_nodes","disconnect_nodes","set_node_param","rename_workflow"]);
+// A copy in the vault before any overwrite; best effort, so a full disk never blocks the owner's own action.
+async function vaultBackup(ctx:ToolContext,label:string){
+  if(!ctx.folder||!ctx.workflowId)return;
+  try{await saveBackup(ctx.folder,label,plainWorkflow(await getN8nWorkflow(ctx.workflowId) as never));}catch{/* the backup is a bonus, not a gate */}
+}
 
 // Actions that can destroy work or start things on their own never run on the model's say-so alone:
 // they wait for the owner's button. The reason is what the owner sees on the card.
@@ -25,6 +31,10 @@ export function approvalReason(ctx:ToolContext,action:Json):string{
   switch(String(action.action||action.type||"")){
     case "rebuild_from_recipe":return "Membangun ulang workflow dari resep Studio MENIMPA seluruh isi workflow sekarang (cadangan disimpan, tapi semua perubahan manual diganti).";
     case "replace_workflow":return `Mengganti seluruh isi workflow dengan ${Array.isArray(action.nodes)?action.nodes.length:"?"} node yang disusun assistant.`;
+    case "propose_plan":{
+      const steps:Json[]=Array.isArray(action.steps)?action.steps:[];
+      return `Menerapkan rencana ${steps.length} langkah sekaligus (semua dibatalkan bila satu gagal): ${steps.slice(0,6).map(s=>`${s?.action||"?"}${s?.node_name||s?.name?" "+(s.node_name||s.name):""}`).join("; ")}${steps.length>6?"…":""}.`;
+    }
     case "restore_from_execution":return `Mengganti seluruh isi workflow dengan salinan yang tersimpan di eksekusi ${action.execution_id||"?"}.`;
     case "publish_n8n_workflow":return action.active===false?"":"Mengaktifkan workflow: semua jadwalnya akan mulai berjalan sendiri.";
     case "add_n8n_node":return ctx.budget&&ctx.budget.adds<=0?`Menambah node di atas batas ${NODE_ADD_LIMIT} per pesan.`:"";
@@ -147,7 +157,7 @@ function summarizeExecution(exec:Json){
 export async function runTool(ctx:ToolContext,action:Json):Promise<ToolResult>{
   try{
     const reason=ctx.approved?"":approvalReason(ctx,action);
-    if(reason)return {ok:false,approval:reason,message:`BELUM DIJALANKAN. Butuh persetujuan pemilik lewat tombol "Izinkan" di layar: ${reason} Jelaskan singkat apa yang akan dilakukan, lalu berhenti. Jangan mengulang aksi ini; mengetik "iya" di chat tidak cukup.`};
+    if(reason)return {ok:false,approval:reason,message:`BELUM DIJALANKAN. Butuh persetujuan pemilik: tombol "Izinkan" di layar, atau pemilik mengetik persetujuan yang jelas (mis. "izinkan"). ${reason} Jelaskan singkat apa yang akan dilakukan, lalu berhenti. Server yang menerapkannya setelah disetujui; jangan mengulang aksi ini.`};
     return await dispatch(ctx,action);
   }catch(error){return fail((error as Error).message);}
 }
@@ -163,6 +173,7 @@ async function dispatch(ctx:ToolContext,action:Json):Promise<ToolResult>{
       case "replace_workflow":{
         if(!Array.isArray(action.nodes)||typeof action.connections!=="object")return fail("replace_workflow butuh nodes (array) dan connections (objek).");
         // Always owner-approved (see approvalReason), so it is not counted against the per-message node budget.
+        await vaultBackup(ctx,"sebelum-replace");
         return mutate(ctx,"Mengganti seluruh workflow",wf=>{
           wf.nodes=action.nodes;wf.connections=action.connections;if(action.name)wf.name=String(action.name);if(action.settings)wf.settings=action.settings;return `Workflow diganti (${wf.nodes.length} node).`;
         });
@@ -239,12 +250,38 @@ async function dispatch(ctx:ToolContext,action:Json):Promise<ToolResult>{
       case "stop_execution":
         if(!action.execution_id)return fail("execution_id wajib diisi.");
         await stopN8nExecution(String(action.execution_id));return {ok:true,changed:true,message:`Eksekusi ${action.execution_id} dihentikan.`};
+      // One approval for a big change made of small steps. It is all-or-nothing: if any step fails, the workflow
+      // is put back exactly as it was. This is how to restructure a workflow without writing all of it as one block.
+      case "propose_plan":{
+        if(!ctx.workflowId)return fail("Project ini belum punya workflow n8n.");
+        const steps:Json[]=Array.isArray(action.steps)?action.steps:[];
+        if(!steps.length)return fail("propose_plan butuh steps: daftar aksi kecil.");
+        if(steps.length>PLAN_MAX)return fail(`Satu rencana paling banyak ${PLAN_MAX} langkah; pecah menjadi beberapa rencana.`);
+        const bad=steps.find(s=>!PLAN_ACTIONS.has(String(s?.action)));
+        if(bad)return fail(`Langkah "${bad?.action}" tidak boleh ada di dalam rencana. Yang boleh: ${[...PLAN_ACTIONS].join(", ")}.`);
+        await vaultBackup(ctx,"sebelum-rencana");
+        const restore=copyOf(await getN8nWorkflow(ctx.workflowId) as unknown as Json),kept=ctx.snaps.length,inner:ToolContext={...ctx,approved:true,budget:undefined};
+        let changes:Changes|null=null;
+        for(const [index,step] of steps.entries()){
+          const result=await runTool(inner,step);
+          if(!result.ok){
+            await updateN8nWorkflow(ctx.workflowId,{name:restore.name,nodes:restore.nodes,connections:restore.connections,settings:restore.settings||{executionOrder:"v1"}} as never);
+            ctx.snaps.length=kept;
+            return fail(`Rencana dibatalkan: langkah ${index+1} (${step.action}) gagal: ${result.message} Workflow dikembalikan seperti semula.`);
+          }
+          if(result.changes)changes=mergeChanges(changes,result.changes);
+        }
+        ctx.snaps.length=kept;ctx.snaps.push({at:new Date().toISOString(),label:`Sebelum rencana (${steps.length} langkah)`,workflow:restore});
+        const real=changes&&hasChanges(changes)?changes:undefined;
+        return {ok:true,changed:!!real,message:`Rencana diterapkan (${steps.length} langkah).${real?"":" Tapi tidak ada yang berbeda di n8n."}`,...(real?{changes:real,before:restore}:{})};
+      }
       // n8n keeps a copy of the workflow in every execution: the way back when work was overwritten.
       case "restore_from_execution":{
         if(!ctx.workflowId)return fail("Project ini belum punya workflow n8n.");
         if(!action.execution_id)return fail("execution_id wajib diisi (lihat list_executions).");
         const saved=(await getN8nExecution(String(action.execution_id)) as unknown as Json).workflowData;
         if(!saved?.nodes||!saved?.connections)return fail("Eksekusi itu tidak menyimpan salinan workflow.");
+        await vaultBackup(ctx,"sebelum-pemulihan");
         return mutate(ctx,`Memulihkan dari eksekusi ${action.execution_id}`,wf=>{wf.nodes=structuredClone(saved.nodes);wf.connections=structuredClone(saved.connections);return `Workflow dipulihkan dari eksekusi ${action.execution_id} (${wf.nodes.length} node).`;});
       }
       case "list_skills":{
@@ -267,7 +304,8 @@ async function dispatch(ctx:ToolContext,action:Json):Promise<ToolResult>{
       case "rebuild_from_recipe":{
         let old:Json|null=null;
         if(ctx.workflowId){old=await getN8nWorkflow(ctx.workflowId) as unknown as Json;ctx.snaps.push({at:new Date().toISOString(),label:"Sebelum dibangun ulang dari resep",workflow:copyOf(old)});}
-        const built=await buildN8nWorkflow(ctx.channel,action.name?{name:String(action.name)}:{});
+        // Only reachable after the owner approved it (see approvalReason), so it may overwrite a customised workflow.
+        const built=await buildN8nWorkflow(ctx.channel,{...(action.name?{name:String(action.name)}:{}),force:true,source:"assistant"});
         ctx.workflowId=built.id;
         const changes=old?diffWorkflow(plainWorkflow(old),plainWorkflow(await getN8nWorkflow(built.id) as never)):undefined;
         return {ok:true,changed:true,message:`Workflow dibangun dari resep Studio (${built.nodes} node).`,...(changes?{changes,before:copyOf(old!)}:{})};
