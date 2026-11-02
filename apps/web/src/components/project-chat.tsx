@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
+  Hourglass,
   Image as ImageIcon,
   Link as LinkIcon,
   LoaderCircle,
@@ -15,9 +16,11 @@ import {
   Paperclip,
   Plus,
   Send,
+  ShieldAlert,
   Sparkles,
   Square,
   Trash2,
+  Undo2,
   X
 } from "lucide-react";
 
@@ -36,6 +39,15 @@ interface Act {
   ok: boolean;
   message: string;
   explanation?: string;
+  pending?: boolean;
+}
+// What really changed in the workflow during a turn, as measured by the server.
+interface Changes {
+  added: string[];
+  removed: string[];
+  changed: { node: string; fields: string[] }[];
+  links: boolean;
+  meta: string[];
 }
 interface Msg {
   id: string;
@@ -44,14 +56,30 @@ interface Msg {
   think?: string;
   attachments?: Attachment[];
   actions?: Act[];
+  changes?: Changes;
+  canUndo?: boolean;
+}
+// An action waiting for the owner's button; it runs only when approved.
+interface PendingItem {
+  id: string;
+  reason: string;
+  action: { action?: string; name?: string; node_name?: string; nodes?: { name?: string }[] };
 }
 interface ThreadView {
   id: string;
   title: string;
   status: "idle" | "running";
   messages: Msg[];
+  pending?: PendingItem[];
   notice?: string;
   undo: number;
+}
+const hasChanged = (c?: Changes) => !!c && !!(c.added.length || c.removed.length || c.changed.length || c.links || c.meta.length);
+function describePending(p: PendingItem) {
+  const a = p.action;
+  if (a.action === "replace_workflow") return `${a.nodes?.length ?? "?"} node: ${(a.nodes || []).map(n => n.name).filter(Boolean).slice(0, 8).join(", ")}${(a.nodes?.length || 0) > 8 ? "…" : ""}`;
+  if (a.action === "add_n8n_node") return `Node baru: ${a.name || "(tanpa nama)"}`;
+  return ACTION_LABEL[a.action || ""] || a.action || "";
 }
 interface ThreadRow {
   id: string;
@@ -76,6 +104,7 @@ const ACTION_LABEL: Record<string, string> = {
   stop_execution: "Menghentikan eksekusi",
   list_credentials: "Melihat credential",
   rebuild_from_recipe: "Membangun dari resep Studio",
+  set_node_param: "Mengubah satu nilai node",
   save_memory: "Menyimpan ke memori",
   rewrite_memory: "Merapikan memori",
   save_rule: "Menyimpan aturan tetap",
@@ -112,6 +141,7 @@ export function ProjectChat({
   const [input, setInput] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [expandedThinks, setExpandedThinks] = useState<Record<string, boolean>>({});
+  const [acting, setActing] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -207,7 +237,7 @@ export function ProjectChat({
     for (const m of thread.messages) {
       if (m.id === "live" || seen.current.has(m.id)) continue;
       seen.current.add(m.id);
-      if (m.actions?.some(a => a.ok && !READ_ONLY.has(a.action))) void refreshRef.current?.();
+      if (m.actions?.some(a => a.ok && !a.pending && !READ_ONLY.has(a.action)) || hasChanged(m.changes)) void refreshRef.current?.();
     }
   }, [thread]);
 
@@ -256,6 +286,33 @@ export function ProjectChat({
       setThread(await call<ThreadView>({ op: "stop", threadId: active }));
     } catch (e) {
       setError((e as Error).message);
+    }
+  };
+
+  // The owner's decision on an action that was held back (the only way such an action ever runs).
+  const decide = async (op: "approve" | "reject", pendingId: string) => {
+    if (!active) return;
+    setActing(true);
+    setError("");
+    try {
+      setThread(await call<ThreadView>({ op, threadId: active, pendingId }));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setActing(false);
+    }
+  };
+  const undoTurn = async (messageId: string) => {
+    if (!active || !window.confirm("Kembalikan workflow ke keadaan sebelum giliran ini? Perubahan lain yang terjadi sesudahnya (termasuk dari chat lain) ikut hilang.")) return;
+    setActing(true);
+    setError("");
+    try {
+      setThread(await call<ThreadView>({ op: "undo_turn", threadId: active, messageId }));
+      void refreshRef.current?.();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setActing(false);
     }
   };
 
@@ -356,9 +413,27 @@ export function ProjectChat({
         )}
         {messages.map(msg =>
           msg.role === "system" ? (
-            <p key={msg.id} className="pj-system-note">
-              {msg.content}
-            </p>
+            hasChanged(msg.changes) ? (
+              <div key={msg.id} className="pj-changes">
+                <strong>{msg.content}</strong>
+                <ul>
+                  {msg.changes!.added.map(n => <li key={"a" + n} className="is-added">+ {n}</li>)}
+                  {msg.changes!.removed.map(n => <li key={"r" + n} className="is-removed">− {n}</li>)}
+                  {msg.changes!.changed.map(c => <li key={"c" + c.node}>✎ {c.node} <small>({c.fields.join(", ")})</small></li>)}
+                  {msg.changes!.links && <li>↔ sambungan antar node berubah</li>}
+                  {msg.changes!.meta.map(m => <li key={m}>• {m}</li>)}
+                </ul>
+                {msg.canUndo && (
+                  <button type="button" className="pj-undo-btn" disabled={acting || running} onClick={() => void undoTurn(msg.id)}>
+                    <Undo2 size={13} /> Urungkan giliran ini
+                  </button>
+                )}
+              </div>
+            ) : (
+              <p key={msg.id} className={"pj-system-note" + (msg.content.startsWith("⚠") ? " is-error" : "")}>
+                {msg.content}
+              </p>
+            )
           ) : (
             <div key={msg.id} className={`pj-message-row ${msg.role === "user" ? "pj-row-user" : "pj-row-assistant"}`}>
               {msg.role === "assistant" && (
@@ -407,8 +482,8 @@ export function ProjectChat({
                 {msg.actions && msg.actions.length > 0 && (
                   <div className="pj-action-log">
                     {msg.actions.map((a, i) => (
-                      <div key={i} className={"pj-action-row " + (a.ok ? "is-ok" : "is-fail")}>
-                        {a.ok ? <Check size={13} /> : <AlertCircle size={13} />}
+                      <div key={i} className={"pj-action-row " + (a.pending ? "is-wait" : a.ok ? "is-ok" : "is-fail")}>
+                        {a.pending ? <Hourglass size={13} /> : a.ok ? <Check size={13} /> : <AlertCircle size={13} />}
                         <div>
                           <strong>{ACTION_LABEL[a.action] || a.action}</strong>
                           <span>{a.message}</span>
@@ -421,6 +496,23 @@ export function ProjectChat({
             </div>
           )
         )}
+        {(thread?.pending || []).map(p => (
+          <div key={p.id} className="pj-approval">
+            <div className="pj-approval-head">
+              <ShieldAlert size={15} /> <strong>Perlu izinmu</strong>
+            </div>
+            <p>{p.reason}</p>
+            <p className="pj-approval-detail">{describePending(p)}</p>
+            <div className="pj-approval-actions">
+              <button type="button" className="pj-action-btn" disabled={acting || running} onClick={() => void decide("approve", p.id)}>
+                Izinkan
+              </button>
+              <button type="button" className="pj-reject-btn" disabled={acting} onClick={() => void decide("reject", p.id)}>
+                Tolak
+              </button>
+            </div>
+          </div>
+        ))}
         {running && !liveMessage && (
           <p className="pj-system-note">
             <LoaderCircle className="spin" size={13} /> Assistant bekerja di server… Anda boleh refresh atau membuka chat lain.

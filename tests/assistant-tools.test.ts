@@ -48,7 +48,7 @@ test("assistant edits the workflow directly, keeps connections consistent and ca
 test("assistant refuses a change that would leave n8n with a broken graph", async () => {
   const n8n = fakeN8n();
   try {
-    const { runTool } = await tools(), ctx = { channel: "chan", workflowId: "wf1", snaps: [] as any[] };
+    const { runTool } = await tools(), ctx = { channel: "chan", workflowId: "wf1", snaps: [] as any[], approved: true };
     const before = JSON.stringify(n8n.state.workflow);
     const bad = await runTool(ctx, { action: "replace_workflow", nodes: [{ name: "A", type: "t" }, { name: "A", type: "t" }], connections: {} });
     assert.equal(bad.ok, false); assert.match(bad.message, /dua kali/);
@@ -70,5 +70,38 @@ test("simultaneous chats editing one workflow do not overwrite each other", asyn
     await Promise.all([runTool(one, { action: "add_n8n_node", name: "Dari chat 1" }), runTool(two, { action: "add_n8n_node", name: "Dari chat 2" })]);
     const names = n8n.state.workflow.nodes.map((n: any) => n.name);
     assert.ok(names.includes("Dari chat 1") && names.includes("Dari chat 2"), names.join(", "));
+  } finally { n8n.restore(); }
+});
+
+// Regression from a real chat: asked to change only a file name, the assistant clobbered its sibling options.
+test("a partial edit changes only what it names and keeps the rest of the node", async () => {
+  const n8n = fakeN8n();
+  try {
+    const { runTool } = await tools(), ctx = { channel: "chan", workflowId: "wf1", snaps: [] as any[] };
+    n8n.state.workflow.nodes.push({ id: "c", name: "Jadikan File", type: "n8n-nodes-base.convertToFile", typeVersion: 1.1, position: [0, 0], parameters: { operation: "toText", options: { fileName: "arthur.md", encoding: "utf8" } } });
+    assert.equal((await runTool(ctx, { action: "modify_n8n_node", node_name: "Jadikan File", parameters: { options: { fileName: "notyet.md" } } })).ok, true);
+    assert.deepEqual(n8n.state.workflow.nodes.find((n: any) => n.name === "Jadikan File").parameters, { operation: "toText", options: { fileName: "notyet.md", encoding: "utf8" } }, "deep merge keeps siblings");
+    assert.equal((await runTool(ctx, { action: "set_node_param", node_name: "Jadikan File", path: "options.fileName", value: "final.md" })).ok, true);
+    assert.deepEqual(n8n.state.workflow.nodes.find((n: any) => n.name === "Jadikan File").parameters.options, { fileName: "final.md", encoding: "utf8" });
+    assert.equal((await runTool(ctx, { action: "set_node_param", node_name: "Jadikan File", path: "", value: "x" })).ok, false);
+    assert.equal(n8n.state.workflow.nodes.find((n: any) => n.name === "Naskah").parameters.text, "lama", "other nodes are untouched");
+  } finally { n8n.restore(); }
+});
+
+test("destructive actions never run on the model's say-so, and the real difference is measurable", async () => {
+  const n8n = fakeN8n();
+  try {
+    const { runTool, diffWorkflow, hasChanges } = await tools(), ctx = { channel: "chan", workflowId: "wf1", snaps: [] as any[] };
+    const before = JSON.parse(JSON.stringify(n8n.state.workflow));
+    for (const action of [{ action: "rebuild_from_recipe" }, { action: "replace_workflow", nodes: [{ name: "A", type: "t" }], connections: {} }, { action: "publish_n8n_workflow", active: true }]) {
+      const held = await runTool(ctx, action);
+      assert.equal(held.ok, false, action.action); assert.ok(held.approval, action.action + " waits for the owner"); assert.match(held.message, /BELUM DIJALANKAN/);
+    }
+    assert.equal(n8n.state.puts, 0, "nothing reached n8n");
+    assert.equal(hasChanges(diffWorkflow(before, n8n.state.workflow)), false, "no change is reported when none happened");
+    assert.equal((await runTool(ctx, { action: "publish_n8n_workflow", active: false })).approval, undefined, "turning a workflow off needs no permission");
+    await runTool(ctx, { action: "set_node_param", node_name: "Naskah", path: "text", value: "baru" });
+    const diff = diffWorkflow(before, n8n.state.workflow);
+    assert.deepEqual(diff.changed, [{ node: "Naskah", fields: ["text"] }]); assert.deepEqual([diff.added, diff.removed], [[], []]);
   } finally { n8n.restore(); }
 });

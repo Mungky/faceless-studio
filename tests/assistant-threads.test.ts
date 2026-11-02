@@ -60,6 +60,9 @@ async function fixture(t: TestContext) {
         const nudged = String(users.at(-1).content).includes("Jawabanmu sebelumnya kosong");
         if (who === "Z" || (who === "E" && !nudged)) return plain(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "Saya menimbang permintaan ini…" } }] })}\n\n` + done("length"));
         if (who === "E") return plain(sse("Sudah saya kerjakan.") + done("stop"));
+        // F: claims a change and writes its own "[Hasil aksi]", but runs nothing. P: tries to replace the whole workflow.
+        if (who === "F") return plain(sse("Sudah saya ganti nama file ke notyet.\n\n[Hasil aksi]\n* modify_n8n_node: berhasil — Node \"Jadikan File .md\" diperbarui.") + done("stop"));
+        if (who === "P") return plain(sse("Saya ganti seluruh workflow.\n```json\n" + JSON.stringify({ actions: [{ action: "replace_workflow", nodes: [{ name: "Baru", type: "n8n-nodes-base.set" }], connections: {} }] }) + "\n```") + done("stop"));
         if (who === "T") return plain(sse("<think>menimbang… ```json\n" + JSON.stringify({ actions: [{ action: "save_memory", note: "Dari dalam think" }] }) + "\n```") + done("stop"));
       }
       const encoder = new TextEncoder();
@@ -100,7 +103,9 @@ test("chats run on the server, in parallel, and survive a refresh", async t => {
   await until(async () => (await api.listThreads(CHANNEL)).every((r: any) => r.status === "idle"), "both chats to finish");
 
   const done = await api.getThread(CHANNEL, a.id);
-  assert.deepEqual(done.messages.map((m: any) => m.role), ["user", "assistant", "assistant"]);
+  // The last message is the server's own report of what really changed in the workflow.
+  assert.deepEqual(done.messages.map((m: any) => m.role), ["user", "assistant", "assistant", "system"]);
+  assert.deepEqual(done.messages[3].changes.added, ["Dari A"]);
   assert.equal(done.messages[1].actions?.[0].ok, true);
   assert.doesNotMatch(done.messages[1].content, /```/, "the action block is not shown as text");
   assert.equal(done.messages[2].content, "Selesai A.");
@@ -183,6 +188,52 @@ test("an action written inside an unclosed think block still runs", async t => {
   assert.match(await readFile(path.join(f.vault, "Arthur", "MEMORI-ASSISTANT.md"), "utf8"), /Dari dalam think/);
 });
 
+// Regression from a real chat: the assistant said a file name was changed, and wrote its own "[Hasil aksi] … berhasil".
+test("a made-up result is cut off, and a claim with no real change is flagged", async t => {
+  const f = await fixture(t), { api } = f, c = await api.createThread(CHANNEL), before = JSON.stringify(f.workflow);
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan F" });
+  await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "the run to finish");
+  const done = await api.getThread(CHANNEL, c.id);
+  const reply = done.messages.find((m: any) => m.role === "assistant");
+  assert.equal(reply.content, "Sudah saya ganti nama file ke notyet.", "the invented result block is gone");
+  assert.doesNotMatch(JSON.stringify(done.messages), /\[Hasil aksi\]/);
+  assert.ok(done.messages.some((m: any) => m.role === "system" && /menulis "hasil aksi" sendiri/.test(m.content)), "the owner is told");
+  assert.ok(done.messages.some((m: any) => m.role === "system" && /^⚠.*TIDAK berubah/.test(m.content)), "the false claim is flagged against the real workflow");
+  assert.equal(JSON.stringify(f.workflow), before, "nothing changed in n8n");
+});
+
+// Regression from a real chat: the assistant rebuilt the workflow on its own and wiped the owner's work.
+test("a whole-workflow replacement waits for the owner's button, can be undone as one turn, or refused", async t => {
+  const f = await fixture(t), { api } = f, c = await api.createThread(CHANNEL);
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan P" });
+  await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "the run to finish");
+  let thread = await api.getThread(CHANNEL, c.id) as any;
+  assert.equal(thread.pending.length, 1); assert.match(thread.pending[0].reason, /Mengganti seluruh isi workflow dengan 1 node/);
+  assert.equal(thread.messages.find((m: any) => m.actions?.length).actions[0].pending, true);
+  assert.deepEqual(f.workflow.nodes.map((n: any) => n.name), ["Mulai"], "nothing ran yet");
+  assert.ok(!thread.messages.some((m: any) => m.changes), "no change to report");
+
+  thread = await api.approvePending(CHANNEL, c.id, thread.pending[0].id) as any;
+  assert.deepEqual(f.workflow.nodes.map((n: any) => n.name), ["Baru"], "approved: it ran, exactly as stored");
+  assert.equal(thread.pending.length, 0);
+  const report = thread.messages.at(-1);
+  assert.deepEqual([report.changes.added, report.changes.removed], [["Baru"], ["Mulai"]]);
+  assert.equal(report.canUndo, true); assert.equal(report.restore, undefined, "restore data is never sent to the page");
+
+  thread = await api.undoTurn(CHANNEL, c.id, report.id) as any;
+  assert.deepEqual(f.workflow.nodes.map((n: any) => n.name), ["Mulai"], "one click puts the whole turn back");
+  assert.ok(!thread.messages.some((m: any) => m.canUndo));
+  await assert.rejects(api.undoTurn(CHANNEL, c.id, report.id), /Hanya giliran terakhir/);
+
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan P lagi" });
+  await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "the second run");
+  thread = await api.getThread(CHANNEL, c.id) as any;
+  assert.equal(thread.pending.length, 1);
+  thread = await api.rejectPending(CHANNEL, c.id, thread.pending[0].id) as any;
+  assert.equal(thread.pending.length, 0); assert.match(thread.messages.at(-1).content, /^Ditolak pemilik/);
+  assert.deepEqual(f.workflow.nodes.map((n: any) => n.name), ["Mulai"], "refused: nothing ran");
+});
+
 test("a long chat is folded into a summary and the assistant keeps its thread", async t => {
   const f = await fixture(t), { api } = f;
   const c = await api.createThread(CHANNEL);
@@ -193,7 +244,7 @@ test("a long chat is folded into a summary and the assistant keeps its thread", 
   const folded = await api.getThread(CHANNEL, c.id) as any;
   assert.match(folded.summary, /^RINGKASAN: pemilik melarang node If dan Wait\.$/, "reasoning tags are stripped");
   assert.ok(folded.summarized >= 12);
-  assert.equal(folded.messages.length, 33, "the chat itself still shows every message");
+  assert.equal(folded.messages.length, 34, "the chat itself still shows every message (30 old + owner + 2 replies + change report)");
 
   await api.sendMessage(CHANNEL, c.id, { content: "kerjakan B" });
   await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "the second run");
