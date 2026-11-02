@@ -611,3 +611,23 @@ input,textarea{caret-color:var(--accent)}
 .pj-undo-btn{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;margin-top:4px;padding:5px 11px;border:1px solid #3a3a3a;border-radius:8px;background:transparent;color:#d0d0d0;font-size:12px;font-weight:600}
 .pj-undo-btn:hover:not(:disabled){border-color:#6a6a6a}
 .pj-action-row.is-wait svg,.pj-action-row.is-wait strong{color:#e8c55a}
+
+/* Context meter, thinking mode, learned notes and the Memori panel */
+.pj-context{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 14px;border-bottom:1px solid #242424;font-size:12px;color:#9a9a9a}
+.pj-context-meter{position:relative;display:inline-flex;align-items:center;gap:5px;padding-bottom:5px}
+.pj-context-meter i{position:absolute;left:0;bottom:0;height:2px;width:100%;border-radius:2px;background:#2a2a2a}
+.pj-context-meter i::after{content:"";position:absolute;left:0;top:0;height:100%;width:var(--p,0%);border-radius:2px;background:var(--accent,#d4ff2a)}
+.pj-mode{display:inline-flex;align-items:center;gap:6px;margin-left:auto}
+.pj-mode select{padding:3px 6px;border:1px solid #2c2c2c;border-radius:6px;background:#161616;color:#d0d0d0;font-size:12px}
+.pj-learned{display:flex;gap:8px;padding:8px 12px;border:1px solid #2c3b2a;border-radius:10px;background:rgba(126,217,87,.06);font-size:12.5px;color:#b5c9ad}
+.pj-learned svg{margin-top:2px;color:#9be06f}
+.pj-learned ul{margin:2px 0;padding-left:16px}
+.pj-learned small{color:#7f8f78}
+.pj-icon-btn.is-on{color:var(--accent,#d4ff2a)}
+.pj-memory{display:flex;flex-direction:column;gap:6px}
+.pj-memory h4{margin:10px 0 2px;font-size:12.5px;color:#e5e5e5}
+.pj-memory-intro{margin:0;font-size:12.5px;color:#9a9a9a;line-height:1.5}
+.pj-memory-empty{margin:0;font-size:12px;color:#7a7a7a}
+.pj-memory-row{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:6px 10px;border:1px solid #242424;border-radius:8px;font-size:12.5px;color:#cfcfcf}
+.pj-memory-row span{overflow-wrap:anywhere;line-height:1.45}
+.pj-memory-row small{color:#8a8a8a}

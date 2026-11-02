@@ -15,7 +15,7 @@ async function fixture(t: TestContext) {
   const { db } = await import("../apps/web/src/server/pocketbase");
   const { defaultChannelPreferences } = await import("../packages/core/src/workspace");
   const vault = await mkdtemp(path.join(os.tmpdir(), "assistant-threads-")); await mkdir(path.join(vault, "Arthur"), { recursive: true });
-  const seen: { system: string[]; sizes: number[]; tokens: unknown[] } = { system: [], sizes: [], tokens: [] };
+  const seen: { system: string[]; sizes: number[]; tokens: unknown[]; efforts: unknown[]; lastUser: string[]; learn: number } = { system: [], sizes: [], tokens: [], efforts: [], lastUser: [], learn: 0 };
   const tables = new Map<string, Map<string, any>>(); let sequence = 0;
   const table = (name: string) => { if (!tables.has(name)) tables.set(name, new Map()); return tables.get(name)!; };
   table("channels").set(CHANNEL, { id: CHANNEL, name: "Arthur" });
@@ -49,8 +49,12 @@ async function fixture(t: TestContext) {
     if (url === "http://router.test/v1/chat/completions") {
       const body = JSON.parse(init.body), messages = body.messages as any[], users = messages.filter(m => m.role === "user");
       // Housekeeping call (summary of an old chat): a plain, non-streaming answer.
-      if (body.stream === false) return new Response(JSON.stringify({ choices: [{ message: { content: "<think>x</think>RINGKASAN: pemilik melarang node If dan Wait." } }] }), { status: 200 });
-      seen.system.push(String(messages[0].content)); seen.sizes.push(messages.length); seen.tokens.push(body.max_tokens);
+      if (body.stream === false) {
+        // The learning step asks for lasting notes: one real fact, one secret (must never be stored), one rule.
+        if (String(messages[0].content).startsWith("Kamu menjaga memori")) { seen.learn++; return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ notes: ["Path decision log Not Yet ada di /vault/Not Yet/decision-log.md", "kunci api: sk-abcdefghijklmnop1234"], rules: ["Jangan pernah menambah node If atau Wait"] }) } }] }), { status: 200 }); }
+        return new Response(JSON.stringify({ choices: [{ message: { content: "<think>x</think>RINGKASAN: pemilik melarang node If dan Wait." } }] }), { status: 200 });
+      }
+      seen.system.push(String(messages[0].content)); seen.sizes.push(messages.length); seen.tokens.push(body.max_tokens); seen.efforts.push(body.reasoning_effort); seen.lastUser.push(String(users.at(-1).content));
       const followUp = String(users.at(-1).content).startsWith("[Sistem] Hasil aksi");
       const who = [...users.map(m => String(m.content)).join("\n").matchAll(/kerjakan (\w)/g)].at(-1)![1];
       // Misbehaving models: only reasoning came back (E once, Z always), or the answer sits in an unclosed <think> (T).
@@ -60,6 +64,7 @@ async function fixture(t: TestContext) {
         const nudged = String(users.at(-1).content).includes("Jawabanmu sebelumnya kosong");
         if (who === "Z" || (who === "E" && !nudged)) return plain(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "Saya menimbang permintaan ini…" } }] })}\n\n` + done("length"));
         if (who === "E") return plain(sse("Sudah saya kerjakan.") + done("stop"));
+        if (who === "K") return plain(sse("Saya baca skill dulu.\n```json\n" + JSON.stringify({ actions: [{ action: "read_skill", name: "ubah-prompt-dari-playbook" }] }) + "\n```") + done("stop"));
         // F: claims a change and writes its own "[Hasil aksi]", but runs nothing. P: tries to replace the whole workflow.
         if (who === "F") return plain(sse("Sudah saya ganti nama file ke notyet.\n\n[Hasil aksi]\n* modify_n8n_node: berhasil — Node \"Jadikan File .md\" diperbarui.") + done("stop"));
         if (who === "P") return plain(sse("Saya ganti seluruh workflow.\n```json\n" + JSON.stringify({ actions: [{ action: "replace_workflow", nodes: [{ name: "Baru", type: "n8n-nodes-base.set" }], connections: {} }] }) + "\n```") + done("stop"));
@@ -250,4 +255,70 @@ test("a long chat is folded into a summary and the assistant keeps its thread", 
   await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "the second run");
   assert.match(f.seen.system.at(-1)!, /RINGKASAN CHAT INI SEBELUMNYA[\s\S]*RINGKASAN: pemilik melarang node If dan Wait\./);
   assert.ok(f.seen.sizes.at(-1)! < f.seen.sizes[0], `the model got fewer messages (${f.seen.sizes.at(-1)}) than before the fold (${f.seen.sizes[0]})`);
+});
+
+test("lasting facts are remembered automatically; a rule only when the owner's own words were an instruction", async t => {
+  const f = await fixture(t), { api } = f, c = await api.createThread(CHANNEL);
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan A dan jangan pernah menambah node If atau Wait" });
+  await until(async () => ((await api.getThread(CHANNEL, c.id)).messages as any[]).some(m => m.learned), "the lesson to be saved");
+  const memory = await readFile(path.join(f.vault, "Arthur", "MEMORI-ASSISTANT.md"), "utf8"), rules = await readFile(path.join(f.vault, "Arthur", "ATURAN-ASSISTANT.md"), "utf8");
+  assert.match(memory, /decision-log\.md/); assert.doesNotMatch(memory, /sk-abcdefgh/, "a secret is never stored");
+  assert.match(rules, /Jangan pernah menambah node If atau Wait/, "the owner said 'jangan', so the rule is kept");
+  const learned = ((await api.getThread(CHANNEL, c.id)).messages as any[]).find(m => m.learned).learned;
+  assert.deepEqual(learned.notes, ["Path decision log Not Yet ada di /vault/Not Yet/decision-log.md"]); assert.equal(learned.rules.length, 1);
+  assert.equal(f.seen.learn, 1);
+
+  // A later turn without an instruction from the owner may add facts but never a rule, and nothing is stored twice.
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan B tolong cek bagian riset ya" });
+  await until(async () => f.seen.learn === 2, "the second turn to be reviewed");
+  await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "idle");
+  assert.equal((await readFile(path.join(f.vault, "Arthur", "ATURAN-ASSISTANT.md"), "utf8")).match(/^- /gm)!.length, 1, "no new rule without an instruction");
+  assert.equal(((await api.getThread(CHANNEL, c.id)).messages as any[]).filter(m => m.learned).length, 1, "a duplicate note is not announced again");
+});
+
+test("an oversized prompt is folded into the summary before it is sent, and the context is measured", async t => {
+  const f = await fixture(t), { api } = f, c = await api.createThread(CHANNEL);
+  const row = [...f.table("workspace_records").values()].find(r => r.data?.id === c.id)!;
+  for (let i = 0; i < 14; i++) row.data.messages.push({ id: "m" + i, role: i % 2 ? "assistant" : "user", content: `pesan ${i} ` + "x".repeat(12_000), created_at: new Date().toISOString() });
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan A" });
+  await until(async () => !!((await api.getThread(CHANNEL, c.id)) as any).summary, "the summary");
+  await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "idle");
+  assert.ok(f.seen.sizes[0] <= 10, `the first call carried ${f.seen.sizes[0]} messages instead of all 15`);
+  const done = await api.getThread(CHANNEL, c.id) as any;
+  assert.equal(done.context.limit, 60_000); assert.ok(done.context.used > 0 && done.context.used < 42_000, `measured ${done.context.used}`);
+  // The owner can also fold the chat on demand.
+  const before = done.summarized;
+  const again = await api.compactThread(CHANNEL, c.id) as any;
+  assert.ok(again.summarized > before, "Rapikan konteks folds more");
+});
+
+test("the thinking mode reaches the model and the prompt", async t => {
+  const f = await fixture(t), { api } = f, c = await api.createThread(CHANNEL), run = async (text: string) => { await api.sendMessage(CHANNEL, c.id, { content: text }); await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", text); };
+  assert.equal(((await api.getThread(CHANNEL, c.id)) as any).mode, "seimbang");
+  await api.setMode(CHANNEL, c.id, "dalam"); await run("kerjakan E");
+  assert.equal(f.seen.efforts.at(-1), "high"); assert.match(f.seen.system.at(-1)!, /MODE DALAM[\s\S]*RENCANA/);
+  await api.setMode(CHANNEL, c.id, "cepat"); await run("kerjakan E");
+  assert.equal(f.seen.efforts.at(-1), "low"); assert.match(f.seen.system.at(-1)!, /MODE CEPAT/);
+  await api.setMode(CHANNEL, c.id, "seimbang"); await run("kerjakan E");
+  assert.equal(f.seen.efforts.at(-1), undefined); assert.doesNotMatch(f.seen.system.at(-1)!, /MODE (CEPAT|DALAM)/);
+  await assert.rejects(api.setMode(CHANNEL, c.id, "gila"), /tidak dikenal/);
+});
+
+test("skills appear as names only, and their full text reaches the model only when it reads one", async t => {
+  const f = await fixture(t), { api } = f, c = await api.createThread(CHANNEL);
+  await mkdir(path.join(f.vault, "Arthur", "Assistant Skills"), { recursive: true });
+  await writeFile(path.join(f.vault, "Arthur", "Assistant Skills", "cek-telegram.md"), "---\nname: cek-telegram\ndescription: Cara menguji Telegram.\n---\nLangkah rahasia yang panjang dan khusus.\n");
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan K" });
+  await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "the run to finish");
+  const prompt = f.seen.system[0];
+  assert.match(prompt, /SKILL TERSEDIA/); assert.match(prompt, /ubah-prompt-dari-playbook \(bawaan\)/); assert.match(prompt, /cek-telegram \(project\): Cara menguji Telegram\./);
+  assert.doesNotMatch(prompt, /Petakan setiap tahap|Langkah rahasia/, "only names and descriptions are in the prompt");
+  assert.ok(f.seen.lastUser.some(m => /Petakan setiap tahap/.test(m)), "after read_skill the model received the full steps");
+});
+
+test("the model is told what really changed after each action, so it can check itself", async t => {
+  const f = await fixture(t), { api } = f, c = await api.createThread(CHANNEL);
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan A" });
+  await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "the run to finish");
+  assert.ok(f.seen.lastUser.some(m => /Perubahan nyata: ditambah: Dari A/.test(m)), f.seen.lastUser.at(-1));
 });

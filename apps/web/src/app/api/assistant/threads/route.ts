@@ -1,6 +1,6 @@
 import {NextRequest,NextResponse} from "next/server";
 import {authenticate} from "../../../../server/auth";
-import {approvePending,createThread,deleteThread,getThread,listThreads,rejectPending,renameThread,sendMessage,stopThread,undoTurn} from "../../../../server/assistant";
+import {approvePending,compactThread,createThread,deleteThread,forgetNote,forgetSkill,getThread,listThreads,memoryOverview,rejectPending,renameThread,sendMessage,setMode,stopThread,undoTurn} from "../../../../server/assistant";
 
 export const runtime="nodejs";
 
@@ -20,6 +20,11 @@ export async function POST(request:NextRequest){
       case "approve":return NextResponse.json(await approvePending(channel,id,String(body.pendingId||"")));
       case "reject":return NextResponse.json(await rejectPending(channel,id,String(body.pendingId||"")));
       case "undo_turn":return NextResponse.json(await undoTurn(channel,id,String(body.messageId||"")));
+      case "set_mode":return NextResponse.json(await setMode(channel,id,body.mode));
+      case "compact":return NextResponse.json(await compactThread(channel,id));
+      case "memory":return NextResponse.json(await memoryOverview(channel));
+      case "forget":return NextResponse.json(await forgetNote(channel,body.kind,body.text));
+      case "forget_skill":return NextResponse.json(await forgetSkill(channel,body.name,body.scope));
       case "rename":return NextResponse.json(await renameThread(channel,id,String(body.title||"")));
       case "delete":return NextResponse.json(await deleteThread(channel,id));
       default:return NextResponse.json({error:"Operasi tidak dikenal."},{status:400});

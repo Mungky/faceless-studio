@@ -2,14 +2,15 @@ import "server-only";
 import {randomUUID} from "node:crypto";
 import path from "node:path";
 import {existsSync,readFileSync} from "node:fs";
-import {recordId,type Channel} from "@studio/core";
+import {recordId,parseJsonOutput,type Channel} from "@studio/core";
 import {db} from "./pocketbase";
 import {channelPreferences,saveWorkspace,workspaceRecord,workspaceRows} from "./workspace";
 import {routerAuth} from "./provider-credentials";
 import {extractUrls,fetchUrlContext} from "./url-context";
 import {runTool,describeWorkflow,hasChanges,mergeChanges,NODE_ADD_LIMIT,type Changes,type Snapshot,type ToolContext} from "./assistant-tools";
 import {getN8nWorkflow,updateN8nWorkflow} from "./n8n";
-import {readNotes} from "./assistant-memory";
+import {addNote,noteLines,readNotes,removeNote} from "./assistant-memory";
+import {deleteSkill,listSkills} from "./assistant-skills";
 
 // The project assistant. Each chat is a record in the database and runs on the server, so a refresh
 // or a closed tab changes nothing and several chats can work at the same time.
@@ -18,13 +19,21 @@ export type ActionResult={action:string;ok:boolean;message:string;explanation?:s
 // changes: what really changed in the workflow during a turn, measured by the server (not claimed by the
 // model). restore: the workflow as it was before that turn, kept for the latest few so "Urungkan giliran ini" works.
 // forModel: a system note the model must also see (approvals, real changes), shown to it as a "[Sistem]" message.
-export type ChatMessage={id:string;role:"user"|"assistant"|"system";forModel?:boolean;content:string;think?:string;attachments?:Attachment[];actions?:ActionResult[];changes?:Changes;restore?:Snapshot["workflow"];created_at:string};
+export type ChatMessage={id:string;role:"user"|"assistant"|"system";forModel?:boolean;content:string;think?:string;attachments?:Attachment[];actions?:ActionResult[];changes?:Changes;restore?:Snapshot["workflow"];learned?:{notes:string[];rules:string[]};created_at:string};
 // An action that waits for the owner's button. It runs exactly as stored, and only when approved.
 export type Pending={id:string;action:Record<string,any>;reason:string;created_at:string};
 // summary folds the first `summarized` messages of a long chat into a few lines the model still sees.
-export type Thread={id:string;channel:string;title:string;status:"idle"|"running";messages:ChatMessage[];snapshots:Snapshot[];pending?:Pending[];notice?:string;summary?:string;summarized?:number;created:string;updated:string};
+// mode: how hard the model thinks (cepat / seimbang / dalam). context: the last measured size of what the model was sent.
+// learnedFor: the owner message whose turn was already mined for lasting notes.
+export type Mode="cepat"|"seimbang"|"dalam";
+export type Thread={id:string;channel:string;title:string;status:"idle"|"running";messages:ChatMessage[];snapshots:Snapshot[];pending?:Pending[];notice?:string;summary?:string;summarized?:number;mode?:Mode;context?:{used:number;limit:number};learnedFor?:string;created:string;updated:string};
 
 const MAX_ROUNDS=8,MAX_CONCURRENT=6,DEFAULT_TITLE="Chat baru",MAX_OUTPUT_TOKENS=16_000,MAX_ATTACHED_TEXT=30_000;
+// What the model is sent should stay under CONTEXT_LIMIT tokens (a rough estimate, 1 token ≈ 3.6 characters).
+// Past COMPACT_AT of it the oldest messages are folded into the summary before the next call.
+const CONTEXT_LIMIT=60_000,COMPACT_AT=0.7,HISTORY_COMPACT=20_000;
+const tokens=(text:string)=>Math.ceil(text.length/3.6);
+const historyTokens=(t:Thread)=>tokens(t.summary||"")+t.messages.slice(t.summarized||0).reduce((sum,m)=>sum+tokens(m.content)+(m.attachments||[]).reduce((s,a)=>s+tokens(a.text||""),0)+(m.actions||[]).reduce((s,a)=>s+tokens(a.message+(a.data?.slice(0,1500)||"")),0),0);
 type Live={ctl:AbortController;partial?:{content:string;think:string}};
 // Kept on globalThis so a dev-server reload does not forget which chats are running.
 const shared=globalThis as unknown as {__assistantLive?:Map<string,Live>;__assistantLocks?:Map<string,Promise<unknown>>};
@@ -71,7 +80,7 @@ function view(thread:Thread){
   const messages=thread.messages.map(({restore:_restore,...m})=>({...m,actions:publicActions(m.actions),...(m.id===undoable?{canUndo:true}:{})})) as (ChatMessage&{canUndo?:boolean})[];
   const partial=live.get(thread.id)?.partial;
   if(partial&&(partial.content||partial.think))messages.push({id:"live",role:"assistant",content:strip(partial.content),think:partial.think,created_at:now()});
-  return {...rest,messages,pending:thread.pending||[],undo:snapshots.length};
+  return {...rest,messages,mode:thread.mode||"seimbang" as Mode,context:{used:thread.context?.used??historyTokens(thread),limit:CONTEXT_LIMIT},pending:thread.pending||[],undo:snapshots.length};
 }
 
 // ---- Public API ----
@@ -117,11 +126,16 @@ export async function sendMessage(channel:string,id:string,input:{content?:strin
 }
 
 // ---- The agent loop ----
-async function systemPrompt(channel:string,workflowId:string,summary:string){
+async function systemPrompt(channel:string,workflowId:string,summary:string,mode:Mode="seimbang"){
   const [project,prefs]=await Promise.all([db.get<Channel>("channels",channel),channelPreferences(channel)]);
   const name=(prefs.project_name||project.name).trim();
   // Standing rules and memory sit in the project's vault folder, which is also what Studio and Obsidian use.
   const [rules,memory]=await Promise.all([readNotes(project.name,"rules").catch(()=>""),readNotes(project.name,"memory").catch(()=>"")]);
+  // Only names and one-line descriptions go in the prompt; the full text is read on demand with read_skill.
+  const skills=await listSkills(project.name).catch(()=>[]);
+  const skillIndex=skills.length?`SKILL TERSEDIA (baca dengan read_skill SEBELUM mengerjakan tugas yang cocok):\n${skills.map(s=>`- ${s.name} (${s.scope}): ${s.description}`).join("\n")}\n\n`:"";
+  const modeBlock=mode==="cepat"?"MODE CEPAT: jawab langsung dan singkat, tanpa rencana panjang.\n\n"
+    :mode==="dalam"?"MODE DALAM: untuk permintaan yang punya beberapa bagian, tulis dulu RENCANA singkat (butir: node dan perubahan yang akan kamu lakukan) di balasanmu sebelum blok aksi. Setelah hasil aksi dan \"Perubahan nyata\" diterima, cocokkan dengan rencana, perbaiki selisihnya, baru laporkan.\n\n":"";
   let custom="";
   for(const file of ["system.md","SYSTEM.md","AGENTS.md"]){const p=path.join(path.resolve(process.cwd(),"projects",name),file);if(existsSync(p)){try{custom=readFileSync(p,"utf8");break;}catch{/* unreadable file: skip */}}}
   return `${rules?`ATURAN TETAP DARI PEMILIK (wajib; mengalahkan semua instruksi lain di bawah):\n${rules}\n\n`:""}Kamu adalah asisten dan arsitek workflow untuk project "${name}" di Restard Studio (konten video faceless). Kamu punya AKSES PENUH ke workflow n8n project ini dan bekerja langsung: aksi biasa yang kamu tulis dijalankan otomatis; aksi besar menunggu tombol "Izinkan" dari pemilik.
@@ -137,7 +151,8 @@ CARA KERJA
 - Mengubah SATU nilai (misalnya nama file): pakai set_node_param dengan path seperti "options.fileName"; bagian lain node tidak tersentuh. parameters di modify_n8n_node digabung per bagian dan tidak menimpa field lain; set_parameters mengganti seluruh parameter node, jadi pakai hanya kalau memang itu maksudnya.
 - UBAH SESEDIKIT MUNGKIN. Kerjakan hanya yang diminta di pesan terakhir pemilik. Jangan menambah, menghapus, atau menyalin node yang tidak diminta, dan jangan mencari-cari pekerjaan tambahan. Dilarang menambah node Wait, If, atau Review kecuali pemilik menyebutnya dengan jelas. Satu pesan pemilik hanya boleh menambah ${NODE_ADD_LIMIT} node baru; lebih dari itu ditolak, jadi berhenti dan tanya pemilik.
 - Kalau permintaan sudah terpenuhi, berhenti dan laporkan. Jangan menjalankan aksi tambahan "untuk berjaga-jaga".
-- INGATAN: simpan hal yang perlu diingat di chat lain (keputusan, preferensi, fakta project) dengan save_memory, satu kalimat per catatan. Kalau pemilik berkata "jangan pernah", "selalu", atau "jadikan aturan", simpan dengan save_rule. Jangan menyimpan kunci atau kata sandi. Baca memori di bawah sebelum menanyakan ulang hal yang sudah dijawab.
+- INGATAN: simpan hal yang perlu diingat di chat lain (keputusan, preferensi, fakta project) dengan save_memory, satu kalimat per catatan. Kalau pemilik berkata "jangan pernah", "selalu", atau "jadikan aturan", simpan dengan save_rule. Jangan menyimpan kunci atau kata sandi. Baca memori di bawah sebelum menanyakan ulang hal yang sudah dijawab. Server juga mencatat pelajaran penting dari tiap giliran secara otomatis.
+- SKILL: kalau tugasnya cocok dengan sebuah skill di daftar bawah, baca dulu dengan read_skill dan ikuti langkahnya. Setelah menyelesaikan tugas yang cara kerjanya bisa dipakai ulang, simpan sebagai skill dengan save_skill (nama huruf kecil-berstrip, deskripsi satu kalimat, langkah ringkas). Dengan begitu kamu makin mahir seiring pemakaian.
 
 AKSI (isi "action" dengan salah satu nama ini; tambahkan "explanation" singkat bila berguna)
 - get_workflow: baca JSON lengkap workflow.
@@ -153,6 +168,8 @@ AKSI (isi "action" dengan salah satu nama ini; tambahkan "explanation" singkat b
 - list_executions {limit?}, get_execution {execution_id}, stop_execution {execution_id}
 - list_credentials
 - rebuild_from_recipe {name?}: bangun ulang workflow dari resep Studio (membuatnya bila belum ada). Ini mengganti seluruh isi workflow, jadi hanya jika pemilik memintanya, dan tetap menunggu tombol Izinkan.
+- list_skills, read_skill {name}, save_skill {name, description, content, scope?:"project"|"global"}: baca dan simpan skill (cara kerja yang bisa dipakai ulang).
+- restore_from_execution {execution_id}: kembalikan workflow dari salinan yang disimpan n8n di sebuah eksekusi (menunggu tombol Izinkan). Cara memulihkan pekerjaan yang tertimpa; jangan pakai rebuild_from_recipe.
 - save_memory {note}: catat satu hal untuk diingat di semua chat project ini. rewrite_memory {content}: rapikan seluruh memori (gabung yang kembar, buang yang usang).
 - save_rule {rule}: simpan aturan tetap dari pemilik; wajib diikuti di setiap chat.
 - undo_last_change
@@ -163,7 +180,7 @@ ATURAN WORKFLOW STUDIO (agar task di Studio tetap jalan)
 - Tahap dengan review = "Review siap · X" (Set: draft, resume_url) → "Review · X" (Wait, resume webhook) → "Disetujui? · X" (If; cabang salah kembali ke tahap X). Pola ini SUDAH ada di workflow. Jangan menambah, menyalin, atau menghapus node Wait/If/Review kecuali pemilik secara eksplisit memintanya; baru kalau diminta tahap baru dengan review, pakai pola ini.
 - Node lain (HTTP Request, Code, dll.) bebas ditambahkan di antara tahap.
 
-${custom?`PANDUAN PROJECT (system.md):\n${custom}\n\n`:""}${memory?`MEMORI PROJECT (diingat antar chat):\n${memory}\n\n`:""}${summary?`RINGKASAN CHAT INI SEBELUMNYA (pesan lama sudah dilipat ke sini):\n${summary}\n\n`:""}KEADAAN WORKFLOW SEKARANG
+${custom?`PANDUAN PROJECT (system.md):\n${custom}\n\n`:""}${memory?`MEMORI PROJECT (diingat antar chat):\n${memory}\n\n`:""}${summary?`RINGKASAN CHAT INI SEBELUMNYA (pesan lama sudah dilipat ke sini):\n${summary}\n\n`:""}${skillIndex}${modeBlock}KEADAAN WORKFLOW SEKARANG
 ${await describeWorkflow(workflowId)}`;
 }
 
@@ -194,12 +211,13 @@ function modelMessages(thread:Thread,fresh:Attachment[],extra:string,tail=""){
   return out;
 }
 
-async function stream(messages:Record<string,unknown>[],signal:AbortSignal,state:Live){
+const EFFORT:Record<Mode,string|undefined>={cepat:"low",seimbang:undefined,dalam:"high"};
+async function stream(messages:Record<string,unknown>[],signal:AbortSignal,state:Live,mode:Mode="seimbang"){
   const {url,apiKey}=await routerAuth();if(!url)throw new Error("9Router belum dikonfigurasi.");
   // A reasoning model can spend a small default limit on thinking and answer nothing, so ask for room.
   const open=(extra:object)=>fetch(url.replace(/\/+$/,"")+"/chat/completions",{method:"POST",headers:{"Content-Type":"application/json",...(apiKey?{Authorization:"Bearer "+apiKey}:{})},body:JSON.stringify({model:"faceless-creation",messages,stream:true,...extra}),signal:AbortSignal.any([signal,AbortSignal.timeout(600_000)])});
-  let response=await open({max_tokens:MAX_OUTPUT_TOKENS});
-  if(response.status===400)response=await open({}); // some models reject an explicit limit
+  let response=await open({max_tokens:MAX_OUTPUT_TOKENS,...(EFFORT[mode]?{reasoning_effort:EFFORT[mode]}:{})});
+  if(response.status===400)response=await open({}); // some models reject an explicit limit or reasoning_effort
   if(!response.ok)throw new Error(`9Router ${response.status}: ${(await response.text().catch(()=>"")).slice(0,300)}`);
   const reader=response.body?.getReader();if(!reader)throw new Error("9Router tidak mengirim jawaban.");
   const decoder=new TextDecoder(),partial=state.partial={content:"",think:""};let buffer="",thinking=false,finish="";
@@ -229,7 +247,7 @@ async function run(channel:string,id:string,fresh:Attachment[],controller:AbortC
   // Declared before the try so the final check (what really changed) runs however the run ends.
   const ctx:ToolContext={channel,workflowId:"",snaps:[],budget:{adds:NODE_ADD_LIMIT}};
   // turn: the sum of what this turn's actions really changed (each read back from n8n); turnBefore: the workflow before the first change.
-  let turn:Changes|null=null,turnBefore:Snapshot["workflow"]|null=null,lastVisible="",fabricated=false;
+  let turn:Changes|null=null,turnBefore:Snapshot["workflow"]|null=null,lastVisible="",fabricated=false,usedTokens=0;
   try{
     const prefs=await channelPreferences(channel),first=await read(channel,id);
     ctx.workflowId=prefs.n8n_workflow_id;ctx.snaps=[...first.snapshots];ctx.folder=(await db.get<Channel>("channels",channel)).name;
@@ -239,9 +257,9 @@ async function run(channel:string,id:string,fresh:Attachment[],controller:AbortC
     if(urls.length){const pages=(await Promise.all(urls.map(fetchUrlContext))).filter(Boolean);if(pages.length)extra+="\n\n--- [Isi link yang dikirim pemilik] ---\n"+pages.map(p=>`Link: ${p!.url}\nJudul: ${p!.title}\nKeterangan: ${p!.description||""}\nKonten: ${p!.content||""}`).join("\n\n")+"\n--- [Akhir link] ---";}
     let nudge="",retried=false;
     for(let round=0;round<MAX_ROUNDS&&!controller.signal.aborted;round++){
-      const thread=await read(channel,id);
-      const out=await stream([{role:"system",content:await systemPrompt(channel,ctx.workflowId,thread.summary||"")},...modelMessages(thread,fresh,extra,nudge)],controller.signal,state);
-      nudge="";
+      const {thread,system,sent,used}=await prepare(channel,id,ctx,fresh,extra,nudge);
+      const out=await stream([{role:"system",content:system},...sent],controller.signal,state,thread.mode||"seimbang");
+      usedTokens=used;nudge="";
       let {visible,actions}=extractActions(out.content);const results:ActionResult[]=[],waiting:{action:Record<string,any>;reason:string}[]=[];
       // A model that writes its own "[Hasil aksi]" is cut off there: only the server reports results.
       if(FABRICATED.test(visible)){fabricated=true;visible=visible.replace(FABRICATED,"").trim();}
@@ -259,11 +277,12 @@ async function run(channel:string,id:string,fresh:Attachment[],controller:AbortC
         const outcome=await runTool(ctx,action);
         if(outcome.approval)waiting.push({action,reason:outcome.approval});
         if(outcome.changes&&hasChanges(outcome.changes)){turn=mergeChanges(turn,outcome.changes);turnBefore??=outcome.before||null;}
-        results.push({action:String(action.action),ok:outcome.ok,message:outcome.message,...(outcome.approval?{pending:true}:{}),...(action.explanation?{explanation:String(action.explanation).slice(0,300)}:{}),...(typeof outcome.data==="string"?{data:outcome.data.slice(0,40_000)}:outcome.data?{data:JSON.stringify(outcome.data).slice(0,40_000)}:{})});
+        // The model is told what REALLY changed (read back from n8n), so it can check itself against the request.
+        results.push({action:String(action.action),ok:outcome.ok,message:outcome.message+(outcome.changes&&hasChanges(outcome.changes)?` Perubahan nyata: ${changeText(outcome.changes)}.`:""),...(outcome.approval?{pending:true}:{}),...(action.explanation?{explanation:String(action.explanation).slice(0,300)}:{}),...(typeof outcome.data==="string"?{data:outcome.data.slice(0,40_000)}:outcome.data?{data:JSON.stringify(outcome.data).slice(0,40_000)}:{})});
       }
       await patch(channel,id,t=>{
         t.messages.push({id:randomUUID(),role:"assistant",content:controller.signal.aborted?(visible?visible+"\n\n":"")+"_(dihentikan)_":visible,...(out.think?{think:out.think}:{}),...(results.length?{actions:results}:{}),created_at:now()});
-        t.snapshots=ctx.snaps.slice(-10);
+        t.snapshots=ctx.snaps.slice(-10);t.context={used:usedTokens,limit:CONTEXT_LIMIT};
         for(const w of waiting)if(!(t.pending||[]).some(p=>JSON.stringify(p.action)===JSON.stringify(w.action)))(t.pending??=[]).push({id:randomUUID(),action:w.action,reason:w.reason,created_at:now()});
         if(t.messages.length>300){const drop=t.messages.length-300;t.messages=t.messages.slice(drop);t.summarized=Math.max(0,(t.summarized||0)-drop);}
       });
@@ -290,7 +309,7 @@ async function run(channel:string,id:string,fresh:Attachment[],controller:AbortC
       t.status="idle";t.notice="";
     }).catch(()=>undefined);
     live.delete(id);
-    if(!controller.signal.aborted)void condense(channel,id).catch(()=>undefined);
+    if(!controller.signal.aborted)void housekeeping(channel,id);
   }
 }
 
@@ -347,6 +366,73 @@ export async function undoTurn(channel:string,id:string,messageId:string){
   }));
 }
 
+// ---- Context, and learning that outlives the chat ----
+// Builds what the model is sent. If it would be too big, the oldest messages are folded into the summary first.
+async function prepare(channel:string,id:string,ctx:ToolContext,fresh:Attachment[],extra:string,nudge:string){
+  for(let pass=0;;pass++){
+    const thread=await read(channel,id),system=await systemPrompt(channel,ctx.workflowId,thread.summary||"",thread.mode||"seimbang"),sent=modelMessages(thread,fresh,extra,nudge);
+    const used=tokens(system)+tokens(JSON.stringify(sent));
+    if(pass>0||used<=COMPACT_AT*CONTEXT_LIMIT)return {thread,system,sent,used};
+    await condense(channel,id,{force:true,keep:8}).catch(()=>undefined);
+  }
+}
+async function housekeeping(channel:string,id:string){
+  await condense(channel,id).catch(()=>undefined);
+  await learn(channel,id).catch(()=>undefined);
+}
+const LEARN_PROMPT=`Kamu menjaga memori jangka panjang seorang asisten workflow n8n. Dari SATU giliran percakapan di bawah, ambil HANYA hal yang berguna di chat lain: (a) fakta tetap tentang project atau workflow (path, nama node, jadwal, keputusan), (b) preferensi atau koreksi dari pemilik, (c) pelajaran dari kesalahan (mis. "path berkas harus diawali /vault"). Jangan menyimpan hal sesaat, isi dokumen panjang, atau rahasia (kunci, kata sandi, token). Jangan mengulang yang sudah tercatat. Balas HANYA JSON: {"notes":["kalimat singkat",...maks 3],"rules":["larangan atau aturan permanen yang DIUCAPKAN pemilik",...maks 2]}. Kosongkan array kalau tidak ada yang layak.`;
+const SECRET=/(sk-[a-z0-9]{12,}|api[_-]?key|password|passwd|secret|token\s*[:=]|bearer\s+[a-z0-9]|eyJ[a-zA-Z0-9_-]{15,})/i;
+const IMPERATIVE=/\b(jangan|dilarang|selalu|wajib|harus|tidak boleh|never|always)\b/i;
+// After a turn, lasting facts and corrections go into the project's memory. A RULE is only saved when the
+// owner's own words were an instruction ("jangan…", "selalu…"), so the model cannot invent rules for them.
+async function learn(channel:string,id:string){
+  const thread=await read(channel,id);if(thread.status==="running")return;
+  const index=thread.messages.map(m=>m.role).lastIndexOf("user"),owner=thread.messages[index];
+  if(!owner||owner.id===thread.learnedFor||owner.content.trim().length<25)return;
+  const turn=thread.messages.slice(index+1).filter(m=>m.role==="assistant"||m.changes);
+  if(!turn.length)return;
+  const folder=(await db.get<Channel>("channels",channel)).name;
+  const known=[await readNotes(folder,"rules"),(await readNotes(folder,"memory")).slice(-1500)].join("\n").trim();
+  const account=turn.map(m=>m.changes?`Perubahan nyata: ${changeText(m.changes)}`:`Assistant: ${m.content.slice(0,700)}${m.actions?.length?` [aksi: ${m.actions.map(a=>`${a.action} ${a.pending?"menunggu izin":a.ok?"ok":"gagal"}`).join(", ")}]`:""}`).join("\n").slice(0,3000);
+  const raw=await complete([{role:"system",content:LEARN_PROMPT},{role:"user",content:`Sudah tercatat:\n${known||"(kosong)"}\n\nPemilik: ${owner.content.slice(0,1500)}\n${account}`}]);
+  let parsed:{notes?:unknown;rules?:unknown}={};try{parsed=parseJsonOutput(raw) as typeof parsed;}catch{/* not JSON: nothing to learn */}
+  const pick=(value:unknown)=>(Array.isArray(value)?value:[]).map(x=>String(x).replace(/\s+/g," ").trim().slice(0,300)).filter(x=>x.length>=8&&!SECRET.test(x)).slice(0,3);
+  const notes:string[]=[],rules:string[]=[];
+  for(const note of pick(parsed.notes))if(!(await addNote(folder,"memory",note).catch(()=>"Sudah")).startsWith("Sudah"))notes.push(note);
+  if(IMPERATIVE.test(owner.content))for(const rule of pick(parsed.rules))if(!(await addNote(folder,"rules",rule).catch(()=>"Sudah")).startsWith("Sudah"))rules.push(rule);
+  await patch(channel,id,t=>{
+    t.learnedFor=owner.id;
+    if(notes.length||rules.length)t.messages.push({id:randomUUID(),role:"system",content:"Diingat otomatis dari giliran ini",learned:{notes,rules},created_at:now()});
+  });
+}
+
+export async function setMode(channel:string,id:string,mode:unknown){
+  recordId.parse(channel);threadId(id);
+  if(!["cepat","seimbang","dalam"].includes(String(mode)))throw new Error("Mode berpikir tidak dikenal.");
+  return view(await patch(channel,id,t=>{t.mode=mode as Mode;}));
+}
+// The owner's "Rapikan konteks": fold everything but the latest few messages into the summary now.
+export async function compactThread(channel:string,id:string){
+  recordId.parse(channel);threadId(id);
+  if(live.has(id))throw new Error("Assistant masih bekerja. Rapikan konteks setelah selesai.");
+  await condense(channel,id,{force:true,keep:6});
+  return view(await patch(channel,id,t=>{t.context=undefined;}));
+}
+// What the assistant knows about this project, for the Memori panel.
+export async function memoryOverview(channel:string){
+  recordId.parse(channel);const folder=(await db.get<Channel>("channels",channel)).name;
+  const [rules,memory,skills]=await Promise.all([noteLines(folder,"rules"),noteLines(folder,"memory"),listSkills(folder)]);
+  return {folder,rules,memory,skills};
+}
+export async function forgetNote(channel:string,kind:unknown,needle:unknown){
+  recordId.parse(channel);const folder=(await db.get<Channel>("channels",channel)).name;
+  return {removed:await removeNote(folder,kind==="rules"?"rules":"memory",needle)};
+}
+export async function forgetSkill(channel:string,name:unknown,scope:unknown){
+  recordId.parse(channel);const folder=(await db.get<Channel>("channels",channel)).name;
+  await deleteSkill(folder,String(name||""),scope==="global"?"global":"project");return {removed:true};
+}
+
 // A plain (non-streaming) model call, for housekeeping such as summarising.
 async function complete(messages:Record<string,unknown>[]){
   const {url,apiKey}=await routerAuth();if(!url)throw new Error("9Router belum dikonfigurasi.");
@@ -359,10 +445,14 @@ async function complete(messages:Record<string,unknown>[]){
 // A long chat keeps its latest messages as they are; everything older is folded into a short summary
 // (decisions, what changed, what is still open), so the assistant stays continuous without the whole log.
 const KEEP_RECENT=14,FOLD_AT=12,SUMMARY_MAX=1800;
-async function condense(channel:string,id:string){
+// Folds old messages into the summary when there are many of them or they are large (by estimated
+// tokens). force: do it now whatever the size (before a call that would be too big, or on the owner's request).
+async function condense(channel:string,id:string,opts:{force?:boolean;keep?:number}={}){
   const thread=await read(channel,id);
-  const upto=thread.messages.length-KEEP_RECENT,from=thread.summarized||0;
-  if(thread.status==="running"||upto-from<FOLD_AT)return;
+  const upto=thread.messages.length-(opts.keep??KEEP_RECENT),from=thread.summarized||0;
+  if(upto<=from)return;
+  if(!opts.force&&(thread.status==="running"||(upto-from<FOLD_AT&&historyTokens(thread)<HISTORY_COMPACT)))return;
+  if(opts.force&&upto-from<2)return;
   const lines=thread.messages.slice(from,upto).filter(m=>m.role!=="system").map(m=>`${m.role==="user"?"Pemilik":"Assistant"}: ${m.content.slice(0,1200)}${m.actions?.length?` [aksi: ${m.actions.map(a=>`${a.action} ${a.ok?"ok":"gagal"} ${a.message}`).join("; ").slice(0,600)}]`:""}`).join("\n");
   const text=await complete([
     {role:"system",content:`Kamu merangkum percakapan antara pemilik dan asisten workflow n8n. Tulis catatan ringkas dalam Bahasa Indonesia (maksimal ${SUMMARY_MAX} karakter, berupa butir-butir): keputusan dan larangan dari pemilik, apa yang sudah diubah di workflow, dan apa yang masih terbuka. Gabungkan dengan ringkasan lama. Jangan mengarang, jangan memasukkan kunci atau kata sandi.`},

@@ -1,7 +1,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
-import { mkdtemp, readFile, rm, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 registerHooks({ resolve(specifier, context, nextResolve) { return specifier === "server-only" ? { url: new URL("./server-only-fixture.cjs", import.meta.url).href, shortCircuit: true } : nextResolve(specifier, context); } });
@@ -19,8 +19,8 @@ async function fixture(t: TestContext) {
     return new Response(JSON.stringify(workflow), { status: 200 });
   }) as typeof fetch;
   t.after(async () => { globalThis.fetch = original; for (const [k, v] of Object.entries(previous)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } await rm(directory, { recursive: true, force: true }); });
-  const tools = await import("../apps/web/src/server/assistant-tools"), notes = await import("../apps/web/src/server/assistant-memory");
-  return { ...tools, ...notes, workflow, directory, ctx: (extra: object = {}) => ({ channel: "chan", workflowId: "wf1", snaps: [] as any[], folder: "Arthur", ...extra }) };
+  const tools = await import("../apps/web/src/server/assistant-tools"), notes = await import("../apps/web/src/server/assistant-memory"), skills = await import("../apps/web/src/server/assistant-skills");
+  return { ...tools, ...notes, ...skills, workflow, directory, ctx: (extra: object = {}) => ({ channel: "chan", workflowId: "wf1", snaps: [] as any[], folder: "Arthur", ...extra }) };
 }
 
 test("a run may add only a few nodes; the owner's next message starts a fresh budget", async t => {
@@ -64,4 +64,44 @@ test("a full memory forgets its oldest lines; full rules refuse instead of dropp
   assert.doesNotMatch(memory, /catatan 0 /, "the oldest was dropped");
   await assert.rejects(async () => { for (let i = 0; i < 40; i++) await f.addNote("Arthur", "rules", `aturan ${i} ` + "y".repeat(380)); }, /penuh/);
   assert.match(await f.readNotes("Arthur", "rules"), /aturan 0 /, "no earlier rule was silently dropped");
+});
+
+test("skills are read on demand, saved in the vault, and a project skill overrides a built-in one", async t => {
+  const f = await fixture(t), ctx = f.ctx();
+  assert.ok((await f.listSkills("Arthur")).some(s => s.name === "ubah-prompt-dari-playbook" && s.scope === "bawaan"), "built-in skills come with the app");
+  const read = await f.runTool(ctx, { action: "read_skill", name: "ubah-prompt-dari-playbook" });
+  assert.equal(read.ok, true); assert.match(String(read.data), /Petakan setiap tahap/);
+  assert.equal((await f.runTool(ctx, { action: "read_skill", name: "tidak-ada" })).ok, false);
+
+  assert.equal((await f.runTool(ctx, { action: "save_skill", name: "Cek Telegram", description: "Cara menguji pengiriman Telegram.", content: "1. Buka node Telegram.\n2. Jalankan uji dan baca hasilnya." })).ok, true);
+  assert.match(await readFile(path.join(f.directory, "Arthur", "Assistant Skills", "cek-telegram.md"), "utf8"), /^---\nname: cek-telegram\ndescription: Cara menguji pengiriman Telegram\.\n---\n1\. Buka node/);
+
+  await f.runTool(ctx, { action: "save_skill", name: "edit-aman", description: "Versi project.", content: "Aturan khusus project Arthur: jangan sentuh node Telegram." });
+  const mine = await f.readSkill("Arthur", "edit-aman");
+  assert.equal(mine.scope, "project"); assert.match(mine.content, /jangan sentuh node Telegram/);
+  assert.equal((await f.readSkill("Not Yet", "edit-aman")).scope, "bawaan", "another project still sees the built-in one");
+
+  assert.equal((await f.runTool(ctx, { action: "save_skill", name: "umum", scope: "global", description: "Berlaku di semua project.", content: "Langkah umum yang berguna untuk semua project." })).ok, true);
+  assert.ok((await f.listSkills("Not Yet")).some(s => s.name === "umum" && s.scope === "global"), "a global skill reaches every project");
+
+  for (const bad of [{ name: "A!", description: "x", content: "x".repeat(40) }, { name: "ok-nama", description: "", content: "x".repeat(40) }, { name: "ok-nama", description: "d", content: "pendek" }, { name: "ok-nama", description: "d", content: "x".repeat(7000) }])
+    assert.equal((await f.runTool(ctx, { action: "save_skill", ...bad })).ok, false, JSON.stringify(bad).slice(0, 60));
+
+  // A skill written by hand in Obsidian is picked up like any other.
+  await writeFile(path.join(f.directory, "Arthur", "Assistant Skills", "tulis-tangan.md"), "---\nname: tulis-tangan\ndescription: Ditulis di Obsidian.\n---\nIsi langkahnya di sini, cukup panjang.\n");
+  assert.equal((await f.listSkills("Arthur")).find(s => s.name === "tulis-tangan")?.description, "Ditulis di Obsidian.");
+  await f.deleteSkill("Arthur", "cek-telegram", "project");
+  assert.ok(!(await f.listSkills("Arthur")).some(s => s.name === "cek-telegram"));
+});
+
+test("the Memori panel can list and delete what was remembered", async t => {
+  const f = await fixture(t);
+  await f.addNote("Arthur", "memory", "Jadwal Arthur jam 19.00 WIB"); await f.addNote("Arthur", "memory", "Path decision log ada di /vault/Arthur"); await f.addNote("Arthur", "rules", "Jangan menambah node If");
+  assert.equal((await f.noteLines("Arthur", "memory")).length, 2);
+  assert.equal(await f.removeNote("Arthur", "memory", "jadwal arthur"), 1);
+  assert.deepEqual((await f.noteLines("Arthur", "memory")).map(l => l.replace(/^- \d{4}-\d{2}-\d{2}: /, "")), ["Path decision log ada di /vault/Arthur"]);
+  assert.equal(await f.removeNote("Arthur", "memory", "tidak ada"), 0);
+  await assert.rejects(f.removeNote("Arthur", "memory", "  "), /bagian catatan/);
+  assert.equal(await f.removeNote("Arthur", "rules", "node if"), 1);
+  assert.deepEqual(await f.noteLines("Arthur", "rules"), []);
 });

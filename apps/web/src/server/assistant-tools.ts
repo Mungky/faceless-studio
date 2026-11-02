@@ -4,6 +4,7 @@ import {
   listN8nExecutions,getN8nExecution,stopN8nExecution,listN8nCredentials
 } from "./n8n";
 import {addNote,replaceMemory} from "./assistant-memory";
+import {listSkills,readSkill,saveSkill} from "./assistant-skills";
 
 // Everything the project assistant may do to the project's n8n workflow. It acts directly: before each
 // change the workflow is copied into the chat's snapshots, so "undo_last_change" can put it back.
@@ -24,6 +25,7 @@ export function approvalReason(ctx:ToolContext,action:Json):string{
   switch(String(action.action||action.type||"")){
     case "rebuild_from_recipe":return "Membangun ulang workflow dari resep Studio MENIMPA seluruh isi workflow sekarang (cadangan disimpan, tapi semua perubahan manual diganti).";
     case "replace_workflow":return `Mengganti seluruh isi workflow dengan ${Array.isArray(action.nodes)?action.nodes.length:"?"} node yang disusun assistant.`;
+    case "restore_from_execution":return `Mengganti seluruh isi workflow dengan salinan yang tersimpan di eksekusi ${action.execution_id||"?"}.`;
     case "publish_n8n_workflow":return action.active===false?"":"Mengaktifkan workflow: semua jadwalnya akan mulai berjalan sendiri.";
     case "add_n8n_node":return ctx.budget&&ctx.budget.adds<=0?`Menambah node di atas batas ${NODE_ADD_LIMIT} per pesan.`:"";
     default:return "";
@@ -237,6 +239,27 @@ async function dispatch(ctx:ToolContext,action:Json):Promise<ToolResult>{
       case "stop_execution":
         if(!action.execution_id)return fail("execution_id wajib diisi.");
         await stopN8nExecution(String(action.execution_id));return {ok:true,changed:true,message:`Eksekusi ${action.execution_id} dihentikan.`};
+      // n8n keeps a copy of the workflow in every execution: the way back when work was overwritten.
+      case "restore_from_execution":{
+        if(!ctx.workflowId)return fail("Project ini belum punya workflow n8n.");
+        if(!action.execution_id)return fail("execution_id wajib diisi (lihat list_executions).");
+        const saved=(await getN8nExecution(String(action.execution_id)) as unknown as Json).workflowData;
+        if(!saved?.nodes||!saved?.connections)return fail("Eksekusi itu tidak menyimpan salinan workflow.");
+        return mutate(ctx,`Memulihkan dari eksekusi ${action.execution_id}`,wf=>{wf.nodes=structuredClone(saved.nodes);wf.connections=structuredClone(saved.connections);return `Workflow dipulihkan dari eksekusi ${action.execution_id} (${wf.nodes.length} node).`;});
+      }
+      case "list_skills":{
+        if(!ctx.folder)return fail("Folder vault project tidak diketahui.");
+        const list=await listSkills(ctx.folder);
+        return {ok:true,message:`${list.length} skill tersedia.`,data:text(list.map(s=>`${s.name} (${s.scope}): ${s.description}`).join("\n"),4000)};
+      }
+      case "read_skill":{
+        if(!ctx.folder)return fail("Folder vault project tidak diketahui.");
+        const skill=await readSkill(ctx.folder,action.name);
+        return {ok:true,message:`Skill "${skill.name}" dibaca. Ikuti langkahnya.`,data:skill.content};
+      }
+      case "save_skill":
+        if(!ctx.folder)return fail("Folder vault project tidak diketahui, skill tidak bisa disimpan.");
+        return {ok:true,message:await saveSkill(ctx.folder,action)};
       case "list_credentials":{
         const list=await listN8nCredentials();
         return {ok:true,message:`${list.data.length} credential di n8n.`,data:text(list.data.map(c=>({id:c.id,name:c.name,type:c.type})),4000)};

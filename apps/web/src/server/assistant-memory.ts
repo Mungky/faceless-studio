@@ -58,3 +58,12 @@ export async function replaceMemory(folder:string,content:unknown){
   await save(folder,"memory",(text.startsWith("#")?"":HEADER.memory)+text+"\n");
   return "Memori dirapikan.";
 }
+// For the Memori panel: one entry per line, and deleting by (part of) the text.
+export async function noteLines(folder:string,kind:NoteKind){return (await readNotes(folder,kind)).split("\n").map(l=>l.trim()).filter(l=>l.startsWith("- "));}
+export async function removeNote(folder:string,kind:NoteKind,needle:unknown){
+  const text=String(needle??"").trim().toLowerCase();if(!text)throw new Error("Tulis bagian catatan yang mau dihapus.");
+  const body=await readFile(await target(folder,kind),"utf8").catch(error=>{if((error as NodeJS.ErrnoException).code==="ENOENT")return "";throw error;});
+  const lines=body.split("\n"),kept=lines.filter(l=>!(l.startsWith("- ")&&l.toLowerCase().includes(text)));
+  if(kept.length===lines.length)return 0;
+  await save(folder,kind,kept.join("\n"));return lines.length-kept.length;
+}
