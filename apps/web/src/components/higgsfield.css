@@ -593,3 +593,21 @@ input,textarea{caret-color:var(--accent)}
 .pj-action-row span{color:#9a9a9a;overflow-wrap:anywhere}
 .pj-action-row.is-ok svg{color:#7ed957}
 .pj-action-row.is-fail svg,.pj-action-row.is-fail strong{color:#f08a8a}
+
+/* Held-back actions, and what a turn really changed (measured by the server) */
+.pj-approval{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border:1px solid #6b5a1e;border-radius:12px;background:rgba(212,170,40,.08)}
+.pj-approval-head{display:flex;align-items:center;gap:7px;color:#e8c55a;font-size:13px}
+.pj-approval p{margin:0;font-size:13px;line-height:1.5;color:#d6d6d6}
+.pj-approval-detail{color:#9a9a9a!important;font-size:12px!important;overflow-wrap:anywhere}
+.pj-approval-actions{display:flex;gap:8px;margin-top:4px}
+.pj-reject-btn{padding:6px 14px;border:1px solid #3a3a3a;border-radius:8px;background:transparent;color:#c8c8c8;font-size:12.5px;font-weight:600}
+.pj-reject-btn:hover:not(:disabled){border-color:#6a6a6a}
+.pj-changes{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px solid #2c2c2c;border-radius:10px;background:#121212;font-size:12.5px}
+.pj-changes strong{color:#e5e5e5;font-weight:600}
+.pj-changes ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:2px;color:#b5b5b5}
+.pj-changes small{color:#8a8a8a}
+.pj-changes .is-added{color:#7ed957}
+.pj-changes .is-removed{color:#f08a8a}
+.pj-undo-btn{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;margin-top:4px;padding:5px 11px;border:1px solid #3a3a3a;border-radius:8px;background:transparent;color:#d0d0d0;font-size:12px;font-weight:600}
+.pj-undo-btn:hover:not(:disabled){border-color:#6a6a6a}
+.pj-action-row.is-wait svg,.pj-action-row.is-wait strong{color:#e8c55a}

@@ -28,13 +28,16 @@ test("a run may add only a few nodes; the owner's next message starts a fresh bu
   assert.equal((await f.runTool(ctx, { action: "add_n8n_node", name: "Satu", node_type: "n8n-nodes-base.set" })).ok, true);
   assert.equal((await f.runTool(ctx, { action: "add_n8n_node", name: "Dua", node_type: "n8n-nodes-base.set" })).ok, true);
   const third = await f.runTool(ctx, { action: "add_n8n_node", name: "If liar", node_type: "n8n-nodes-base.if" });
-  assert.equal(third.ok, false); assert.match(third.message, /Batas 2 node baru.*tanyakan pemilik/);
-  assert.equal(f.workflow.nodes.some((n: any) => n.name === "If liar"), false, "the refused node never reached n8n");
+  assert.equal(third.ok, false); assert.match(third.approval!, /di atas batas 2/); assert.match(third.message, /BELUM DIJALANKAN/);
+  assert.equal(f.workflow.nodes.some((n: any) => n.name === "If liar"), false, "the held-back node never reached n8n");
   const bulk = await f.runTool(ctx, { action: "replace_workflow", nodes: [...f.workflow.nodes, { name: "X", type: "t" }], connections: f.workflow.connections });
-  assert.equal(bulk.ok, false, "replace_workflow cannot sidestep the budget");
+  assert.equal(bulk.ok, false); assert.ok(bulk.approval, "replace_workflow always waits for the owner's button");
+  // Only the owner's approval lets the held-back action through.
+  assert.equal((await f.runTool({ ...ctx, approved: true, budget: undefined }, { action: "add_n8n_node", name: "If liar", node_type: "n8n-nodes-base.if" })).ok, true);
+  assert.equal(f.workflow.nodes.some((n: any) => n.name === "If liar"), true);
   // Changing existing nodes is not "adding": it stays allowed once the budget is spent.
   assert.equal((await f.runTool(ctx, { action: "modify_n8n_node", node_name: "Satu", prompt: "x" })).ok, true);
-  assert.equal((await f.runTool(f.ctx({ budget: { adds: f.NODE_ADD_LIMIT } }), { action: "add_n8n_node", name: "Tiga", node_type: "n8n-nodes-base.set" })).ok, true);
+  assert.equal((await f.runTool(f.ctx({ budget: { adds: f.NODE_ADD_LIMIT } }), { action: "add_n8n_node", name: "Tiga", node_type: "n8n-nodes-base.set" })).ok, true, "a new message starts a fresh budget");
 });
 
 test("rules and memory are saved as Markdown in the project's vault folder", async t => {

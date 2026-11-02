@@ -1,6 +1,6 @@
 import {NextRequest,NextResponse} from "next/server";
 import {authenticate} from "../../../../server/auth";
-import {createThread,deleteThread,getThread,listThreads,renameThread,sendMessage,stopThread} from "../../../../server/assistant";
+import {approvePending,createThread,deleteThread,getThread,listThreads,rejectPending,renameThread,sendMessage,stopThread,undoTurn} from "../../../../server/assistant";
 
 export const runtime="nodejs";
 
@@ -17,6 +17,9 @@ export async function POST(request:NextRequest){
       case "get":return NextResponse.json(await getThread(channel,id));
       case "send":return NextResponse.json(await sendMessage(channel,id,{content:body.content,attachments:Array.isArray(body.attachments)?body.attachments:[]}));
       case "stop":return NextResponse.json(await stopThread(channel,id));
+      case "approve":return NextResponse.json(await approvePending(channel,id,String(body.pendingId||"")));
+      case "reject":return NextResponse.json(await rejectPending(channel,id,String(body.pendingId||"")));
+      case "undo_turn":return NextResponse.json(await undoTurn(channel,id,String(body.messageId||"")));
       case "rename":return NextResponse.json(await renameThread(channel,id,String(body.title||"")));
       case "delete":return NextResponse.json(await deleteThread(channel,id));
       default:return NextResponse.json({error:"Operasi tidak dikenal."},{status:400});
