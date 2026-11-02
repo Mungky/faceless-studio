@@ -283,7 +283,7 @@ export function ProjectChat({
   const lastId = thread?.messages.at(-1)?.id;
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [lastId, thread?.messages.at(-1)?.content, thread?.status]);
+  }, [lastId, thread?.messages.at(-1)?.content, thread?.status, thread?.pending?.length]);
 
   const running = thread?.status === "running";
 

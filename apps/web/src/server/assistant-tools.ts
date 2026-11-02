@@ -157,7 +157,7 @@ function summarizeExecution(exec:Json){
 export async function runTool(ctx:ToolContext,action:Json):Promise<ToolResult>{
   try{
     const reason=ctx.approved?"":approvalReason(ctx,action);
-    if(reason)return {ok:false,approval:reason,message:`BELUM DIJALANKAN. Butuh persetujuan pemilik lewat tombol "Izinkan" di layar: ${reason} Jelaskan singkat apa yang akan dilakukan, lalu berhenti. Jangan mengulang aksi ini; mengetik "iya" di chat tidak cukup.`};
+    if(reason)return {ok:false,approval:reason,message:`BELUM DIJALANKAN. Butuh persetujuan pemilik: tombol "Izinkan" di layar, atau pemilik mengetik persetujuan yang jelas (mis. "izinkan"). ${reason} Jelaskan singkat apa yang akan dilakukan, lalu berhenti. Server yang menerapkannya setelah disetujui; jangan mengulang aksi ini.`};
     return await dispatch(ctx,action);
   }catch(error){return fail((error as Error).message);}
 }
@@ -304,7 +304,8 @@ async function dispatch(ctx:ToolContext,action:Json):Promise<ToolResult>{
       case "rebuild_from_recipe":{
         let old:Json|null=null;
         if(ctx.workflowId){old=await getN8nWorkflow(ctx.workflowId) as unknown as Json;ctx.snaps.push({at:new Date().toISOString(),label:"Sebelum dibangun ulang dari resep",workflow:copyOf(old)});}
-        const built=await buildN8nWorkflow(ctx.channel,action.name?{name:String(action.name)}:{});
+        // Only reachable after the owner approved it (see approvalReason), so it may overwrite a customised workflow.
+        const built=await buildN8nWorkflow(ctx.channel,{...(action.name?{name:String(action.name)}:{}),force:true,source:"assistant"});
         ctx.workflowId=built.id;
         const changes=old?diffWorkflow(plainWorkflow(old),plainWorkflow(await getN8nWorkflow(built.id) as never)):undefined;
         return {ok:true,changed:true,message:`Workflow dibangun dari resep Studio (${built.nodes} node).`,...(changes?{changes,before:copyOf(old!)}:{})};

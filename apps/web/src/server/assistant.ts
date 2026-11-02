@@ -156,8 +156,11 @@ export async function sendMessage(channel:string,id:string,input:{content?:strin
       if(t.title===DEFAULT_TITLE&&content)t.title=content.replace(/\s+/g," ").slice(0,48);
       t.messages.push({id:randomUUID(),role:"user",content,attachments:stored,created_at:now()});
     });
+    // "izinkan" typed by the owner while exactly one action waits: apply it now, so the model then reports the real result.
+    const typed=typedApproval(saved.pending,content);
+    const current=typed?await applyPending(channel,id,typed.id,"diketik").catch(()=>saved):saved;
     void run(channel,id,fresh,controller);
-    return view(saved);
+    return view(current);
   }catch(error){live.delete(id);throw error;}
 }
 
@@ -183,7 +186,7 @@ CARA KERJA
 - Credential dan API key dibuat pemilik sendiri di n8n. Kamu hanya memilih credential yang sudah ada (list_credentials). Jangan menulis kunci rahasia di workflow atau di chat.
 - Chat lain bisa mengubah workflow yang sama. Baca ulang kalau ragu soal keadaan terbaru.
 - HASIL AKSI datang dari server sebagai pesan terpisah berawalan "[Sistem] Hasil aksi". JANGAN PERNAH menulis "[Hasil aksi]" atau hasil apa pun sendiri. Jangan bilang sesuatu sudah diubah kecuali aksinya ada di blok json dan server sudah melaporkan "berhasil". Setelah giliranmu, server menunjukkan kepada pemilik apa yang BENAR-BENAR berubah di workflow, jadi klaim yang tidak cocok akan terlihat.
-- Aksi besar (rebuild_from_recipe, replace_workflow, mengaktifkan workflow, menambah node di atas batas) TIDAK dijalankan sampai pemilik menekan tombol "Izinkan" di layar; mengetik "iya" di chat tidak cukup. Jangan menawarkan rebuild_from_recipe atau replace_workflow untuk "memulihkan" sesuatu. Untuk mengembalikan perubahan, pakai undo_last_change atau minta pemilik menekan "Urungkan giliran ini".
+- Aksi besar (rebuild_from_recipe, replace_workflow, mengaktifkan workflow, menambah node di atas batas) TIDAK dijalankan sampai pemilik menyetujuinya: dengan tombol "Izinkan" di layar, atau dengan mengetik persetujuan yang jelas (mis. "izinkan") saat hanya ada satu aksi yang menunggu. Server yang menerapkannya: kamu tidak perlu mengulang aksi itu, dan jangan mengaku sudah diterapkan sebelum hasil dari server datang. Jangan menawarkan rebuild_from_recipe atau replace_workflow untuk "memulihkan" sesuatu. Untuk mengembalikan perubahan, pakai undo_last_change atau minta pemilik menekan "Urungkan giliran ini".
 - Mengubah SATU nilai (misalnya nama file): pakai set_node_param dengan path seperti "options.fileName"; bagian lain node tidak tersentuh. parameters di modify_n8n_node digabung per bagian dan tidak menimpa field lain; set_parameters mengganti seluruh parameter node, jadi pakai hanya kalau memang itu maksudnya.
 - UBAH SESEDIKIT MUNGKIN. Kerjakan hanya yang diminta di pesan terakhir pemilik. Jangan menambah, menghapus, atau menyalin node yang tidak diminta, dan jangan mencari-cari pekerjaan tambahan. Dilarang menambah node Wait, If, atau Review kecuali pemilik menyebutnya dengan jelas. Satu pesan pemilik hanya boleh menambah ${NODE_ADD_LIMIT} node baru; lebih dari itu ditolak, jadi berhenti dan tanya pemilik.
 - Kalau permintaan sudah terpenuhi, berhenti dan laporkan. Jangan menjalankan aksi tambahan "untuk berjaga-jaga".
@@ -374,18 +377,27 @@ function keepRestorePoints(t:Thread){for(const m of t.messages.filter(x=>x.resto
 export async function approvePending(channel:string,id:string,pendingId:string){
   recordId.parse(channel);threadId(id);
   if(live.has(id))throw new Error("Assistant masih bekerja. Tunggu selesai atau tekan Stop, lalu tekan Izinkan.");
+  return view(await applyPending(channel,id,pendingId,"tombol"));
+}
+// Runs one held action exactly as stored. `how` says what the owner did: pressed the button, or typed a clear approval.
+async function applyPending(channel:string,id:string,pendingId:string,how:"tombol"|"diketik"){
   const thread=await read(channel,id),item=thread.pending?.find(p=>p.id===pendingId);
   if(!item)throw new Error("Permintaan izin ini sudah tidak ada.");
   const [prefs,project]=await Promise.all([channelPreferences(channel),db.get<Channel>("channels",channel)]);
   const ctx:ToolContext={channel,workflowId:prefs.n8n_workflow_id,snaps:[...thread.snapshots],folder:project.name,approved:true};
   const outcome=await runTool(ctx,item.action),report=buildReport(outcome.changes||null,outcome.before||null,"");
-  return view(await patch(channel,id,t=>{
+  return patch(channel,id,t=>{
     t.pending=(t.pending||[]).filter(p=>p.id!==pendingId);t.snapshots=ctx.snaps.slice(-10);
-    t.messages.push({id:randomUUID(),role:"system",forModel:true,content:`Disetujui pemilik dan ${outcome.ok?"dijalankan":"GAGAL"}: ${outcome.message}`,created_at:now()});
+    t.messages.push({id:randomUUID(),role:"system",forModel:true,content:`Disetujui pemilik (${how}) dan ${outcome.ok?"dijalankan":"GAGAL"}: ${outcome.message}`,created_at:now()});
     if(report)t.messages.push(report);
     keepRestorePoints(t);
-  }));
+  });
 }
+// The owner's own typed words count as approval when they are clear and exactly one action is waiting. They come
+// from the owner's message, never from the model's text, so the model cannot approve for them.
+const APPROVE=/\b(izinkan|diizinkan|setuju|boleh|terapkan|lanjutkan|jalankan)\b|^\s*(iya|ya|oke|ok|yes|y|siap)\s*[.!]*\s*$/i;
+const REFUSE=/\b(jangan|tidak|nggak|gak|belum|batal|tolak|stop|bukan|tunggu)\b/i;
+const typedApproval=(pending:Pending[]|undefined,text:string)=>pending?.length===1&&text.length<=80&&APPROVE.test(text)&&!REFUSE.test(text)?pending[0]:null;
 export async function rejectPending(channel:string,id:string,pendingId:string){
   recordId.parse(channel);threadId(id);
   return view(await patch(channel,id,t=>{

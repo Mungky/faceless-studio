@@ -74,7 +74,7 @@ async function handle(request: NextRequest, context: { params: Promise<{ path: s
     if(route==="workspace"&&method==="GET")return reply(await workspaceData());
     if(parts[0]==="n8n"&&parts[1]==="projects"&&parts[2]){const channel=recordId.parse(parts[2]);
       if(parts.length===3&&method==="GET")return reply(await n8nProject(channel));
-      if(parts[3]==="build"&&method==="POST")return reply(await buildN8nWorkflow(channel,z.object({name:z.string().trim().max(120).optional()}).strict().parse(await body(request))),201);}
+      if(parts[3]==="build"&&method==="POST")return reply(await buildN8nWorkflow(channel,{...z.object({name:z.string().trim().max(120).optional(),force:z.boolean().optional()}).strict().parse(await body(request)),source:"panel"}),201);}
     if(parts[0]==="studio"&&parts[1]==="projects"&&parts[2]&&parts[3]==="thread"&&method==="GET")return reply(await projectThread(recordId.parse(parts[2])));
     if(parts[0]==="studio"&&parts[1]==="threads"){
       if(!parts[2]&&method==="GET")return reply(await studioThreads());

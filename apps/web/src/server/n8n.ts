@@ -107,14 +107,20 @@ export function recipeToN8n(name:string,recipe:WorkflowTemplate,options:{model?:
 }
 
 // Rebuilding keeps the workflow's id, webhook path and the 9Router credential the owner chose.
-export async function buildN8nWorkflow(channel:string,input:{name?:string}={}){
+// A workflow that has been customised (it has nodes the recipe does not) is never rebuilt from the recipe by
+// accident: callers must pass force, and only the owner's explicit confirmation does. source says who asked.
+export async function buildN8nWorkflow(channel:string,input:{name?:string;force?:boolean;source?:string}={}){
   const {project,prefs,workflow,name}=await projectContext(channel);if(!workflow)throw new Error("Project ini belum punya workflow Studio untuk diterjemahkan.");
   const current=prefs.n8n_workflow_id?await n8n<N8nWorkflow>("/workflows/"+prefs.n8n_workflow_id).catch(()=>undefined):undefined;
   const credential=current?.nodes.map(n=>n.credentials?.openAiApi).find(Boolean)||(await n8n<{data:N8nWorkflow[]}>("/workflows?limit=250")).data.flatMap(w=>w.nodes).map(n=>n.credentials?.openAiApi).find(Boolean);
   const hookPath=current?.nodes.find(n=>n.type==="n8n-nodes-base.webhook")?.parameters.path as string|undefined;
   const body=recipeToN8n(input.name||current?.name||name+" · Studio",workflow,{path:hookPath,credential});
+  if(current&&!input.force){
+    const known=new Set(body.nodes.map(n=>n.name)),custom=current.nodes.filter(n=>!known.has(n.name)).length;
+    if(custom>0)throw new Error(`Workflow n8n ini sudah dikustomisasi (${custom} node bukan dari resep Studio). Membangun ulang dari resep akan menimpanya, jadi ditolak. Kalau memang itu yang dimau, pakai tombol bangun ulang di panel n8n dan setujui konfirmasinya.`);
+  }
   // Rebuilding replaces everything in the workflow, including changes made by hand: keep a copy in the vault first.
-  if(current)await saveBackup(project.name,"sebelum-bangun-ulang",{name:current.name,active:current.active,nodes:current.nodes,connections:current.connections,settings:current.settings}).catch(()=>undefined);
+  if(current)await saveBackup(project.name,"sebelum-bangun-ulang-"+(input.source||"api"),{name:current.name,active:current.active,nodes:current.nodes,connections:current.connections,settings:current.settings}).catch(()=>undefined);
   const saved=current?await n8n<N8nWorkflow>("/workflows/"+current.id,{method:"PUT",body:JSON.stringify(body)}):await n8n<N8nWorkflow>("/workflows",{method:"POST",body:JSON.stringify(body)});
   const tag=await projectTag(name);await n8n("/workflows/"+saved.id+"/tags",{method:"PUT",body:JSON.stringify([{id:tag.id}])});
   if(!current){const next:ChannelPreferences={...prefs,n8n_workflow_id:saved.id};await saveWorkspace("preferences:"+channel,"preferences",channel,{...next,revision:prefs.revision+1},prefs.revision);}

@@ -1,6 +1,6 @@
 import { test, mock, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { registerHooks } from "node:module";
@@ -44,6 +44,10 @@ async function fixture(t: TestContext) {
   process.env.VAULT_ROOT = vault; process.env.N8N_URL = "http://n8n.test"; process.env.N8N_API_KEY = "k"; process.env.NINEROUTER_URL = "http://router.test/v1";
   globalThis.fetch = (async (input: any, init: any = {}) => {
     const url = String(input);
+    // What rebuilding from the recipe also touches: the workflow list, and the project's tag.
+    if (url.startsWith("http://n8n.test/api/v1/tags")) return new Response(JSON.stringify((init.method || "GET") === "POST" ? { id: "t1", name: "Arthur" } : { data: [] }), { status: 200 });
+    if (/\/workflows\/wf1\/tags$/.test(url)) return new Response("[]", { status: 200 });
+    if (url.startsWith("http://n8n.test/api/v1/workflows?")) return new Response(JSON.stringify({ data: [workflow] }), { status: 200 });
     if (url.startsWith("http://n8n.test/api/v1/workflows/wf1")) {
       if ((init.method || "GET") === "PUT") Object.assign(workflow, JSON.parse(init.body));
       return new Response(JSON.stringify(workflow), { status: 200 });
@@ -63,6 +67,8 @@ async function fixture(t: TestContext) {
       const done = (reason: string) => `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: reason }] })}\n\n`;
       const plain = (text: string) => new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(text + "data: [DONE]\n\n")); c.close(); } }), { status: 200 });
       if (!followUp) {
+        // After the owner approved a held action, a sensible model reports instead of asking for it again.
+        if (users.slice(-3).some(m => String(m.content).includes("Disetujui pemilik"))) return plain(sse("Sudah diterapkan.") + done("stop"));
         const nudged = String(users.at(-1).content).includes("Jawabanmu sebelumnya kosong");
         if (who === "Z" || (who === "E" && !nudged)) return plain(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "Saya menimbang permintaan ini…" } }] })}\n\n` + done("length"));
         if (who === "E") return plain(sse("Sudah saya kerjakan.") + done("stop"));
@@ -387,4 +393,53 @@ test("a multi-step plan needs one approval, applies all steps, and can be undone
   assert.deepEqual(report.changes.added, ["Langkah 1", "Langkah 2", "Langkah 3"]); assert.equal(report.canUndo, true);
   thread = await api.undoTurn(CHANNEL, c.id, report.id) as any;
   assert.deepEqual(f.workflow.nodes.map((n: any) => n.name), ["Mulai"], "one click undoes the whole plan");
+});
+
+// Regression from a real chat: the approval card never showed, and the owner's typed "saya izinkan" did nothing.
+test("an approval the owner types counts, but only when it is clear and exactly one action waits", async t => {
+  const f = await fixture(t), { api } = f, c = await api.createThread(CHANNEL), idle = async (label: string) => until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", label);
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan P" }); await idle("the first run");
+  assert.equal(((await api.getThread(CHANNEL, c.id)) as any).pending.length, 1);
+
+  await api.sendMessage(CHANNEL, c.id, { content: "jangan izinkan dulu" }); await idle("a refusal");
+  assert.equal(((await api.getThread(CHANNEL, c.id)) as any).pending.length, 1, "a message with a refusal never approves");
+  assert.deepEqual(f.workflow.nodes.map((n: any) => n.name), ["Mulai"]);
+
+  const asked = ((await api.getThread(CHANNEL, c.id)).messages as any[]).filter(m => m.actions?.some((a: any) => a.pending)).length;
+  await api.sendMessage(CHANNEL, c.id, { content: "tapi saya izinkan" }); await idle("the typed approval");
+  const done = await api.getThread(CHANNEL, c.id) as any;
+  assert.deepEqual(f.workflow.nodes.map((n: any) => n.name), ["Baru"], "the owner's typed approval applied the held action");
+  assert.equal(done.pending.length, 0);
+  assert.ok(done.messages.some((m: any) => m.role === "system" && /Disetujui pemilik \(diketik\) dan dijalankan/.test(m.content)));
+  assert.ok(done.messages.some((m: any) => m.changes?.added?.includes("Baru")), "and the real change is reported");
+  assert.equal(done.messages.filter((m: any) => m.actions?.some((a: any) => a.pending)).length, asked, "after the approval the model did not ask for it again");
+
+  // Two actions waiting: a bare "izinkan" is ambiguous, so nothing runs.
+  await api.undoTurn(CHANNEL, c.id, done.messages.find((m: any) => m.canUndo).id);
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan P" }); await idle("a new hold");
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan N" }); await idle("a second hold");
+  assert.equal(((await api.getThread(CHANNEL, c.id)) as any).pending.length, 2);
+  await api.sendMessage(CHANNEL, c.id, { content: "izinkan" }); await idle("an ambiguous approval");
+  assert.equal(((await api.getThread(CHANNEL, c.id)) as any).pending.length, 2, "with two waiting, nothing is approved by words");
+  assert.deepEqual(f.workflow.nodes.map((n: any) => n.name), ["Mulai"]);
+});
+
+// Regression from a real chat: a hand-made 22-node workflow kept turning back into the 31-node recipe.
+test("a customised workflow is never rebuilt from the recipe by accident", async t => {
+  const f = await fixture(t), build = (await import("../apps/web/src/server/n8n")).buildN8nWorkflow;
+  f.workflow.nodes.push({ id: "t", name: "Kirim ke Telegram", type: "n8n-nodes-base.telegram", typeVersion: 1.2, position: [0, 0], parameters: {} });
+  const before = JSON.stringify(f.workflow);
+
+  await assert.rejects(build(CHANNEL, {}), /sudah dikustomisasi \(2 node bukan dari resep Studio\)/);
+  await assert.rejects(build(CHANNEL, { source: "assistant" }), /sudah dikustomisasi/);
+  assert.equal(JSON.stringify(f.workflow), before, "refused: nothing was overwritten");
+
+  await build(CHANNEL, { force: true, source: "panel" }); // only an explicit confirmation overwrites
+  assert.ok(f.workflow.nodes.some((n: any) => n.name === "Mulai dari Studio"), "rebuilt from the recipe");
+  const dir = path.join(f.vault, "Arthur", "Workflow Backup"), files = await readdir(dir);
+  assert.ok(files.some(n => /sebelum-bangun-ulang-panel\.json$/.test(n)), files.join(", "));
+  const names = JSON.parse(await readFile(path.join(dir, files.find(n => /panel/.test(n))!), "utf8")).nodes.map((n: any) => n.name);
+  assert.deepEqual(names, ["Mulai", "Kirim ke Telegram"], "the hand-made workflow was saved first");
+
+  await build(CHANNEL, {}); // a workflow that only has recipe nodes can be refreshed without fuss
 });
