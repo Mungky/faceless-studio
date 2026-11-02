@@ -76,10 +76,13 @@ const ACTION_LABEL: Record<string, string> = {
   stop_execution: "Menghentikan eksekusi",
   list_credentials: "Melihat credential",
   rebuild_from_recipe: "Membangun dari resep Studio",
+  save_memory: "Menyimpan ke memori",
+  rewrite_memory: "Merapikan memori",
+  save_rule: "Menyimpan aturan tetap",
   undo_last_change: "Mengurungkan perubahan"
 };
 // Actions that only look; the n8n editor is reloaded after anything else succeeds.
-const READ_ONLY = new Set(["get_workflow", "list_executions", "get_execution", "list_credentials"]);
+const READ_ONLY = new Set(["get_workflow", "list_executions", "get_execution", "list_credentials", "save_memory", "rewrite_memory", "save_rule"]);
 
 export function ProjectChat({
   project,

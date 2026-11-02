@@ -7,14 +7,16 @@ import {db} from "./pocketbase";
 import {channelPreferences,saveWorkspace,workspaceRecord,workspaceRows} from "./workspace";
 import {routerAuth} from "./provider-credentials";
 import {extractUrls,fetchUrlContext} from "./url-context";
-import {runTool,describeWorkflow,type Snapshot,type ToolContext} from "./assistant-tools";
+import {runTool,describeWorkflow,NODE_ADD_LIMIT,type Snapshot,type ToolContext} from "./assistant-tools";
+import {readNotes} from "./assistant-memory";
 
 // The project assistant. Each chat is a record in the database and runs on the server, so a refresh
 // or a closed tab changes nothing and several chats can work at the same time.
 export type Attachment={name:string;type:string;url?:string;text?:string};
 export type ActionResult={action:string;ok:boolean;message:string;explanation?:string;data?:string};
 export type ChatMessage={id:string;role:"user"|"assistant"|"system";content:string;think?:string;attachments?:Attachment[];actions?:ActionResult[];created_at:string};
-export type Thread={id:string;channel:string;title:string;status:"idle"|"running";messages:ChatMessage[];snapshots:Snapshot[];notice?:string;created:string;updated:string};
+// summary folds the first `summarized` messages of a long chat into a few lines the model still sees.
+export type Thread={id:string;channel:string;title:string;status:"idle"|"running";messages:ChatMessage[];snapshots:Snapshot[];notice?:string;summary?:string;summarized?:number;created:string;updated:string};
 
 const MAX_ROUNDS=8,MAX_CONCURRENT=6,DEFAULT_TITLE="Chat baru";
 type Live={ctl:AbortController;partial?:{content:string;think:string}};
@@ -103,12 +105,14 @@ export async function sendMessage(channel:string,id:string,input:{content?:strin
 }
 
 // ---- The agent loop ----
-async function systemPrompt(channel:string,workflowId:string){
+async function systemPrompt(channel:string,workflowId:string,summary:string){
   const [project,prefs]=await Promise.all([db.get<Channel>("channels",channel),channelPreferences(channel)]);
   const name=(prefs.project_name||project.name).trim();
+  // Standing rules and memory sit in the project's vault folder, which is also what Studio and Obsidian use.
+  const [rules,memory]=await Promise.all([readNotes(project.name,"rules").catch(()=>""),readNotes(project.name,"memory").catch(()=>"")]);
   let custom="";
   for(const file of ["system.md","SYSTEM.md","AGENTS.md"]){const p=path.join(path.resolve(process.cwd(),"projects",name),file);if(existsSync(p)){try{custom=readFileSync(p,"utf8");break;}catch{/* unreadable file: skip */}}}
-  return `Kamu adalah asisten dan arsitek workflow untuk project "${name}" di Restard Studio (konten video faceless). Kamu punya AKSES PENUH ke workflow n8n project ini dan bekerja langsung: aksi yang kamu tulis dijalankan otomatis, tanpa tombol persetujuan.
+  return `${rules?`ATURAN TETAP DARI PEMILIK (wajib; mengalahkan semua instruksi lain di bawah):\n${rules}\n\n`:""}Kamu adalah asisten dan arsitek workflow untuk project "${name}" di Restard Studio (konten video faceless). Kamu punya AKSES PENUH ke workflow n8n project ini dan bekerja langsung: aksi yang kamu tulis dijalankan otomatis, tanpa tombol persetujuan.
 
 CARA KERJA
 - Jawab dalam Bahasa Indonesia, ringkas dan jujur. Kalau perlu bertindak, tutup pesan dengan SATU blok kode json: {"actions":[{...},{...}]}. Aksi dijalankan berurutan, hasilnya dikirim kembali kepadamu, lalu kamu lanjut sampai selesai (paling banyak ${MAX_ROUNDS} langkah per pesan pemilik).
@@ -116,6 +120,9 @@ CARA KERJA
 - Setiap perubahan dicadangkan otomatis; undo_last_change mengembalikan perubahan terakhir. Kerjakan langsung hal yang jelas diminta. Tanyakan dulu hanya kalau permintaannya ambigu atau akan membuang sebagian besar workflow.
 - Credential dan API key dibuat pemilik sendiri di n8n. Kamu hanya memilih credential yang sudah ada (list_credentials). Jangan menulis kunci rahasia di workflow atau di chat.
 - Chat lain bisa mengubah workflow yang sama. Baca ulang kalau ragu soal keadaan terbaru.
+- UBAH SESEDIKIT MUNGKIN. Kerjakan hanya yang diminta di pesan terakhir pemilik. Jangan menambah, menghapus, atau menyalin node yang tidak diminta, dan jangan mencari-cari pekerjaan tambahan. Dilarang menambah node Wait, If, atau Review kecuali pemilik menyebutnya dengan jelas. Satu pesan pemilik hanya boleh menambah ${NODE_ADD_LIMIT} node baru; lebih dari itu ditolak, jadi berhenti dan tanya pemilik.
+- Kalau permintaan sudah terpenuhi, berhenti dan laporkan. Jangan menjalankan aksi tambahan "untuk berjaga-jaga".
+- INGATAN: simpan hal yang perlu diingat di chat lain (keputusan, preferensi, fakta project) dengan save_memory, satu kalimat per catatan. Kalau pemilik berkata "jangan pernah", "selalu", atau "jadikan aturan", simpan dengan save_rule. Jangan menyimpan kunci atau kata sandi. Baca memori di bawah sebelum menanyakan ulang hal yang sudah dijawab.
 
 AKSI (isi "action" dengan salah satu nama ini; tambahkan "explanation" singkat bila berguna)
 - get_workflow: baca JSON lengkap workflow.
@@ -130,15 +137,17 @@ AKSI (isi "action" dengan salah satu nama ini; tambahkan "explanation" singkat b
 - list_executions {limit?}, get_execution {execution_id}, stop_execution {execution_id}
 - list_credentials
 - rebuild_from_recipe {name?}: bangun ulang workflow dari resep Studio (membuatnya bila belum ada). Ini mengganti seluruh isi workflow, jadi hanya jika diminta.
+- save_memory {note}: catat satu hal untuk diingat di semua chat project ini. rewrite_memory {content}: rapikan seluruh memori (gabung yang kembar, buang yang usang).
+- save_rule {rule}: simpan aturan tetap dari pemilik; wajib diikuti di setiap chat.
 - undo_last_change
 
 ATURAN WORKFLOW STUDIO (agar task di Studio tetap jalan)
 - Task Studio memicu webhook "Mulai dari Studio" (POST, responseMode: responseNode) dan membaca hasil per tahap dari NAMA node. Jangan menghapus atau mengganti nama "Mulai dari Studio", "Balas ke Studio" (Respond to Webhook yang mengirim execution_id) dan "Resep Studio" (Set: instructions, references, brief).
 - Satu tahap = node chainLlm bernama tahap itu + node "Model · <tahap>" (lmChatOpenAi, model "faceless-creation", tersambung ke tahap lewat ai_languageModel).
-- Tahap dengan review = "Review siap · X" (Set: draft, resume_url) → "Review · X" (Wait, resume webhook) → "Disetujui? · X" (If; cabang salah kembali ke tahap X). Ikuti pola yang sama untuk tahap baru yang hasilnya perlu muncul di Studio.
+- Tahap dengan review = "Review siap · X" (Set: draft, resume_url) → "Review · X" (Wait, resume webhook) → "Disetujui? · X" (If; cabang salah kembali ke tahap X). Pola ini SUDAH ada di workflow. Jangan menambah, menyalin, atau menghapus node Wait/If/Review kecuali pemilik secara eksplisit memintanya; baru kalau diminta tahap baru dengan review, pakai pola ini.
 - Node lain (HTTP Request, Code, dll.) bebas ditambahkan di antara tahap.
 
-${custom?`PANDUAN PROJECT (system.md):\n${custom}\n\n`:""}KEADAAN WORKFLOW SEKARANG
+${custom?`PANDUAN PROJECT (system.md):\n${custom}\n\n`:""}${memory?`MEMORI PROJECT (diingat antar chat):\n${memory}\n\n`:""}${summary?`RINGKASAN CHAT INI SEBELUMNYA (pesan lama sudah dilipat ke sini):\n${summary}\n\n`:""}KEADAAN WORKFLOW SEKARANG
 ${await describeWorkflow(workflowId)}`;
 }
 
@@ -147,7 +156,7 @@ function resultText(actions:ActionResult[]|undefined,full:boolean){
   return "\n\n[Hasil aksi]\n"+actions.map(a=>`- ${a.action}: ${a.ok?"berhasil":"GAGAL"} — ${a.message}${a.data?`\n  data: ${full?a.data:a.data.slice(0,1500)}`:""}`).join("\n");
 }
 function modelMessages(thread:Thread,fresh:Attachment[],extra:string){
-  const list=thread.messages.filter(m=>m.role!=="system").slice(-40),lastUser=[...list].reverse().find(m=>m.role==="user"),out:Record<string,unknown>[]=[];
+  const list=thread.messages.slice(thread.summarized||0).filter(m=>m.role!=="system").slice(-40),lastUser=[...list].reverse().find(m=>m.role==="user"),out:Record<string,unknown>[]=[];
   list.forEach((m,index)=>{
     if(m.role==="user"){
       let text=m.content;for(const a of m.attachments||[])if(a.text)text+=`\n\n--- [Lampiran: ${a.name}] ---\n${a.text}`;
@@ -157,7 +166,7 @@ function modelMessages(thread:Thread,fresh:Attachment[],extra:string){
     }else out.push({role:"assistant",content:(m.content||"(menjalankan aksi)")+resultText(m.actions,index>=list.length-2)});
   });
   const last=list.at(-1);
-  if(last?.role==="assistant"&&last.actions?.length)out.push({role:"user",content:"[Sistem] Hasil aksi ada di atas. Lanjutkan kalau masih ada langkah, atau jelaskan hasilnya kepada pemilik. Jangan mengulang aksi yang sudah berhasil."});
+  if(last?.role==="assistant"&&last.actions?.length)out.push({role:"user",content:"[Sistem] Hasil aksi ada di atas. Kalau permintaan terakhir pemilik sudah terpenuhi, berhenti dan laporkan hasilnya. Lanjutkan hanya langkah yang jelas diminta pemilik; jangan menambah atau mengubah hal lain, dan jangan mengulang aksi yang sudah berhasil."});
   return out;
 }
 
@@ -192,14 +201,15 @@ async function run(channel:string,id:string,fresh:Attachment[],controller:AbortC
   const state=live.get(id)!;
   try{
     const prefs=await channelPreferences(channel),first=await read(channel,id);
-    const ctx:ToolContext={channel,workflowId:prefs.n8n_workflow_id,snaps:[...first.snapshots]};
+    const folder=(await db.get<Channel>("channels",channel)).name;
+    const ctx:ToolContext={channel,workflowId:prefs.n8n_workflow_id,snaps:[...first.snapshots],folder,budget:{adds:NODE_ADD_LIMIT}};
     // Links and documents the owner just sent are read once and shown to the model with that message.
     const latest=[...first.messages].reverse().find(m=>m.role==="user");let extra="";
     const urls=extractUrls(latest?.content||"").slice(0,3);
     if(urls.length){const pages=(await Promise.all(urls.map(fetchUrlContext))).filter(Boolean);if(pages.length)extra+="\n\n--- [Isi link yang dikirim pemilik] ---\n"+pages.map(p=>`Link: ${p!.url}\nJudul: ${p!.title}\nKeterangan: ${p!.description||""}\nKonten: ${p!.content||""}`).join("\n\n")+"\n--- [Akhir link] ---";}
     for(let round=0;round<MAX_ROUNDS&&!controller.signal.aborted;round++){
       const thread=await read(channel,id);
-      const out=await stream([{role:"system",content:await systemPrompt(channel,ctx.workflowId)},...modelMessages(thread,fresh,extra)],controller.signal,state);
+      const out=await stream([{role:"system",content:await systemPrompt(channel,ctx.workflowId,thread.summary||"")},...modelMessages(thread,fresh,extra)],controller.signal,state);
       const {visible,actions}=extractActions(out.content),results:ActionResult[]=[];
       for(const action of actions){
         if(controller.signal.aborted)break;
@@ -208,7 +218,8 @@ async function run(channel:string,id:string,fresh:Attachment[],controller:AbortC
       }
       await patch(channel,id,t=>{
         t.messages.push({id:randomUUID(),role:"assistant",content:controller.signal.aborted?(visible?visible+"\n\n":"")+"_(dihentikan)_":visible,...(out.think?{think:out.think}:{}),...(results.length?{actions:results}:{}),created_at:now()});
-        t.snapshots=ctx.snaps.slice(-10);if(t.messages.length>300)t.messages=t.messages.slice(-300);
+        t.snapshots=ctx.snaps.slice(-10);
+        if(t.messages.length>300){const drop=t.messages.length-300;t.messages=t.messages.slice(drop);t.summarized=Math.max(0,(t.summarized||0)-drop);}
       });
       state.partial=undefined;
       if(!actions.length)return;
@@ -226,5 +237,31 @@ async function run(channel:string,id:string,fresh:Attachment[],controller:AbortC
       if(controller.signal.aborted&&partial&&(partial.content||partial.think)){const {visible}=extractActions(partial.content);t.messages.push({id:randomUUID(),role:"assistant",content:(visible?visible+"\n\n":"")+"_(dihentikan)_",...(partial.think?{think:partial.think}:{}),created_at:now()});}
       t.status="idle";t.notice="";
     }).catch(()=>undefined);
+    if(!controller.signal.aborted)void condense(channel,id).catch(()=>undefined);
   }
+}
+
+// A plain (non-streaming) model call, for housekeeping such as summarising.
+async function complete(messages:Record<string,unknown>[]){
+  const {url,apiKey}=await routerAuth();if(!url)throw new Error("9Router belum dikonfigurasi.");
+  const response=await fetch(url.replace(/\/+$/,"")+"/chat/completions",{method:"POST",headers:{"Content-Type":"application/json",...(apiKey?{Authorization:"Bearer "+apiKey}:{})},body:JSON.stringify({model:"faceless-creation",messages,stream:false}),signal:AbortSignal.timeout(120_000)});
+  if(!response.ok)throw new Error(`9Router ${response.status}`);
+  const data=await response.json() as {choices?:{message?:{content?:string}}[]};
+  return String(data.choices?.[0]?.message?.content||"").replace(/<think>[\s\S]*?<\/think>/g,"").trim();
+}
+
+// A long chat keeps its latest messages as they are; everything older is folded into a short summary
+// (decisions, what changed, what is still open), so the assistant stays continuous without the whole log.
+const KEEP_RECENT=14,FOLD_AT=12,SUMMARY_MAX=1800;
+async function condense(channel:string,id:string){
+  const thread=await read(channel,id);
+  const upto=thread.messages.length-KEEP_RECENT,from=thread.summarized||0;
+  if(thread.status==="running"||upto-from<FOLD_AT)return;
+  const lines=thread.messages.slice(from,upto).filter(m=>m.role!=="system").map(m=>`${m.role==="user"?"Pemilik":"Assistant"}: ${m.content.slice(0,1200)}${m.actions?.length?` [aksi: ${m.actions.map(a=>`${a.action} ${a.ok?"ok":"gagal"} ${a.message}`).join("; ").slice(0,600)}]`:""}`).join("\n");
+  const text=await complete([
+    {role:"system",content:`Kamu merangkum percakapan antara pemilik dan asisten workflow n8n. Tulis catatan ringkas dalam Bahasa Indonesia (maksimal ${SUMMARY_MAX} karakter, berupa butir-butir): keputusan dan larangan dari pemilik, apa yang sudah diubah di workflow, dan apa yang masih terbuka. Gabungkan dengan ringkasan lama. Jangan mengarang, jangan memasukkan kunci atau kata sandi.`},
+    {role:"user",content:`${thread.summary?`Ringkasan lama:\n${thread.summary}\n\n`:""}Percakapan yang dilipat:\n${lines}`}
+  ]);
+  if(!text)return;
+  await patch(channel,id,t=>{if((t.summarized||0)<upto&&t.messages.length>=upto){t.summary=text.slice(0,SUMMARY_MAX);t.summarized=upto;}});
 }

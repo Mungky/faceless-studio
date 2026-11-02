@@ -3,13 +3,20 @@ import {
   buildN8nWorkflow,getN8nWorkflow,updateN8nWorkflow,activateN8nWorkflow,deactivateN8nWorkflow,triggerN8nWorkflow,
   listN8nExecutions,getN8nExecution,stopN8nExecution,listN8nCredentials
 } from "./n8n";
+import {addNote,replaceMemory} from "./assistant-memory";
 
 // Everything the project assistant may do to the project's n8n workflow. It acts directly: before each
 // change the workflow is copied into the chat's snapshots, so "undo_last_change" can put it back.
 type Json=Record<string,any>;
 export type Snapshot={at:string;label:string;workflow:{name:string;nodes:unknown[];connections:Json;settings?:Json}};
 export type ToolResult={ok:boolean;message:string;data?:unknown;changed?:boolean};
-export type ToolContext={channel:string;workflowId:string;snaps:Snapshot[]};
+// folder: the project's folder in the vault (memory and rules live there). budget: how many new
+// nodes this run may still add; the owner's next message starts a fresh budget.
+export type ToolContext={channel:string;workflowId:string;snaps:Snapshot[];folder?:string;budget?:{adds:number}};
+export const NODE_ADD_LIMIT=2;
+function checkBudget(ctx:ToolContext,count:number){
+  if(ctx.budget&&count>ctx.budget.adds)throw new Error(`Batas ${NODE_ADD_LIMIT} node baru per pesan pemilik sudah tercapai (sisa ${ctx.budget.adds}). Berhenti, laporkan apa yang sudah dilakukan, dan tanyakan pemilik sebelum menambah lagi.`);
+}
 
 // Chats may edit the same workflow at once; their read-change-write steps queue one behind another.
 const queue=new Map<string,Promise<unknown>>();
@@ -88,11 +95,19 @@ async function dispatch(ctx:ToolContext,action:Json):Promise<ToolResult>{
         const wf=await getN8nWorkflow(ctx.workflowId) as unknown as Json;
         return {ok:true,message:"Workflow lengkap dibaca.",data:text({name:wf.name,active:wf.active,nodes:wf.nodes,connections:wf.connections,settings:wf.settings},40_000)};
       }
-      case "replace_workflow":
+      case "replace_workflow":{
         if(!Array.isArray(action.nodes)||typeof action.connections!=="object")return fail("replace_workflow butuh nodes (array) dan connections (objek).");
-        return mutate(ctx,"Mengganti seluruh workflow",wf=>{wf.nodes=action.nodes;wf.connections=action.connections;if(action.name)wf.name=String(action.name);if(action.settings)wf.settings=action.settings;return `Workflow diganti (${wf.nodes.length} node).`;});
-      case "add_n8n_node":
-        return mutate(ctx,`Menambah node "${action.name}"`,wf=>{
+        let fresh=0;
+        const done=await mutate(ctx,"Mengganti seluruh workflow",wf=>{
+          fresh=action.nodes.filter((n:Json)=>!wf.nodes.some((o:Json)=>o.name===n.name)).length;checkBudget(ctx,fresh);
+          wf.nodes=action.nodes;wf.connections=action.connections;if(action.name)wf.name=String(action.name);if(action.settings)wf.settings=action.settings;return `Workflow diganti (${wf.nodes.length} node).`;
+        });
+        if(done.ok&&ctx.budget)ctx.budget.adds-=fresh;
+        return done;
+      }
+      case "add_n8n_node":{
+        const done=await mutate(ctx,`Menambah node "${action.name}"`,wf=>{
+          checkBudget(ctx,1);
           const name=String(action.name||action.node?.name||"");if(!name)throw new Error("Nama node wajib diisi.");
           const source=action.connect_from?find(wf,action.connect_from):undefined;
           const position=action.position||(source?[source.position[0]+260,source.position[1]]:[(wf.nodes.at(-1)?.position?.[0]||0)+260,300]);
@@ -101,6 +116,18 @@ async function dispatch(ctx:ToolContext,action:Json):Promise<ToolResult>{
           if(action.connect_to)connect(wf,name,String(find(wf,action.connect_to)?.name||action.connect_to));
           return `Node "${name}" ditambahkan.`;
         });
+        if(done.ok&&ctx.budget)ctx.budget.adds--;
+        return done;
+      }
+      case "save_memory":
+        if(!ctx.folder)return fail("Folder vault project tidak diketahui, memori tidak bisa disimpan.");
+        return {ok:true,message:await addNote(ctx.folder,"memory",action.note??action.text)};
+      case "save_rule":
+        if(!ctx.folder)return fail("Folder vault project tidak diketahui, aturan tidak bisa disimpan.");
+        return {ok:true,message:await addNote(ctx.folder,"rules",action.rule??action.note??action.text)};
+      case "rewrite_memory":
+        if(!ctx.folder)return fail("Folder vault project tidak diketahui, memori tidak bisa diubah.");
+        return {ok:true,message:await replaceMemory(ctx.folder,action.content)};
       case "modify_n8n_node":
         return mutate(ctx,`Mengubah node "${action.node_name||action.name}"`,wf=>{
           const node=find(wf,action.node_name||action.name);if(!node)throw new Error(`Node "${action.node_name||action.name}" tidak ditemukan.`);

@@ -1,5 +1,8 @@
 import { test, mock, type TestContext } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
 import { registerHooks } from "node:module";
 registerHooks({ resolve(specifier, context, nextResolve) { return specifier === "server-only" ? { url: new URL("./server-only-fixture.cjs", import.meta.url).href, shortCircuit: true } : nextResolve(specifier, context); } });
 
@@ -11,6 +14,8 @@ const sse = (text: string) => `data: ${JSON.stringify({ choices: [{ delta: { con
 async function fixture(t: TestContext) {
   const { db } = await import("../apps/web/src/server/pocketbase");
   const { defaultChannelPreferences } = await import("../packages/core/src/workspace");
+  const vault = await mkdtemp(path.join(os.tmpdir(), "assistant-threads-")); await mkdir(path.join(vault, "Arthur"), { recursive: true });
+  const seen: { system: string[]; sizes: number[] } = { system: [], sizes: [] };
   const tables = new Map<string, Map<string, any>>(); let sequence = 0;
   const table = (name: string) => { if (!tables.has(name)) tables.set(name, new Map()); return tables.get(name)!; };
   table("channels").set(CHANNEL, { id: CHANNEL, name: "Arthur" });
@@ -33,8 +38,8 @@ async function fixture(t: TestContext) {
   const workflow = { id: "wf1", name: "Arthur", active: false, settings: { executionOrder: "v1" }, connections: {}, nodes: [{ id: "a", name: "Mulai", type: "n8n-nodes-base.webhook", typeVersion: 2, position: [0, 0], parameters: {} }] } as any;
   const gates: Record<string, () => void> = {}, waiting: Record<string, Promise<void>> = {};
   const gate = (name: string) => { waiting[name] = new Promise<void>(r => { gates[name] = r; }); };
-  const original = globalThis.fetch, previous = { N8N_URL: process.env.N8N_URL, N8N_API_KEY: process.env.N8N_API_KEY, NINEROUTER_URL: process.env.NINEROUTER_URL };
-  process.env.N8N_URL = "http://n8n.test"; process.env.N8N_API_KEY = "k"; process.env.NINEROUTER_URL = "http://router.test/v1";
+  const original = globalThis.fetch, previous = { VAULT_ROOT: process.env.VAULT_ROOT, N8N_URL: process.env.N8N_URL, N8N_API_KEY: process.env.N8N_API_KEY, NINEROUTER_URL: process.env.NINEROUTER_URL };
+  process.env.VAULT_ROOT = vault; process.env.N8N_URL = "http://n8n.test"; process.env.N8N_API_KEY = "k"; process.env.NINEROUTER_URL = "http://router.test/v1";
   globalThis.fetch = (async (input: any, init: any = {}) => {
     const url = String(input);
     if (url.startsWith("http://n8n.test/api/v1/workflows/wf1")) {
@@ -42,9 +47,12 @@ async function fixture(t: TestContext) {
       return new Response(JSON.stringify(workflow), { status: 200 });
     }
     if (url === "http://router.test/v1/chat/completions") {
-      const messages = JSON.parse(init.body).messages as any[], users = messages.filter(m => m.role === "user");
-      const first = String(users[0].content), followUp = String(users.at(-1).content).startsWith("[Sistem]");
-      const who = /kerjakan (\w)/.exec(first)![1];
+      const body = JSON.parse(init.body), messages = body.messages as any[], users = messages.filter(m => m.role === "user");
+      // Housekeeping call (summary of an old chat): a plain, non-streaming answer.
+      if (body.stream === false) return new Response(JSON.stringify({ choices: [{ message: { content: "<think>x</think>RINGKASAN: pemilik melarang node If dan Wait." } }] }), { status: 200 });
+      seen.system.push(String(messages[0].content)); seen.sizes.push(messages.length);
+      const followUp = String(users.at(-1).content).startsWith("[Sistem]");
+      const who = [...users.map(m => String(m.content)).join("\n").matchAll(/kerjakan (\w)/g)].at(-1)![1];
       const encoder = new TextEncoder();
       return new Response(new ReadableStream({ async start(controller) {
         init.signal?.addEventListener("abort", () => controller.error(new DOMException("aborted", "AbortError")));
@@ -58,9 +66,9 @@ async function fixture(t: TestContext) {
     }
     return original(input, init);
   }) as typeof fetch;
-  t.after(() => { mock.restoreAll(); globalThis.fetch = original; for (const [k, v] of Object.entries(previous)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+  t.after(async () => { mock.restoreAll(); globalThis.fetch = original; await rm(vault, { recursive: true, force: true }); for (const [k, v] of Object.entries(previous)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
   const api = await import("../apps/web/src/server/assistant");
-  return { api, workflow, gate, release: (name: string) => gates[name](), table };
+  return { api, workflow, gate, release: (name: string) => gates[name](), table, vault, seen };
 }
 
 test("chats run on the server, in parallel, and survive a refresh", async t => {
@@ -117,4 +125,37 @@ test("a chat left running by a restart is shown as stopped, not stuck", async t 
   assert.equal((await api.listThreads(CHANNEL))[0].status, "idle");
   await api.deleteThread(CHANNEL, c.id);
   assert.deepEqual(await api.listThreads(CHANNEL), []);
+});
+
+test("standing rules and project memory from the vault reach every turn", async t => {
+  const f = await fixture(t), { api } = f;
+  await writeFile(path.join(f.vault, "Arthur", "ATURAN-ASSISTANT.md"), "# Aturan tetap assistant\n\n- Jangan pernah menambah node If atau Wait.\n");
+  await writeFile(path.join(f.vault, "Arthur", "MEMORI-ASSISTANT.md"), "# Memori assistant\n\n- 2026-11-02: Jadwal Arthur jam 19.00 WIB.\n");
+  const c = await api.createThread(CHANNEL);
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan A" });
+  await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "the run to finish");
+  assert.ok(f.seen.system.length >= 2, "the run took two rounds");
+  for (const prompt of f.seen.system) {
+    assert.match(prompt, /^ATURAN TETAP DARI PEMILIK[\s\S]*Jangan pernah menambah node If atau Wait\./, "rules come first");
+    assert.match(prompt, /MEMORI PROJECT[\s\S]*Jadwal Arthur jam 19\.00 WIB\./);
+    assert.match(prompt, /UBAH SESEDIKIT MUNGKIN/);
+  }
+});
+
+test("a long chat is folded into a summary and the assistant keeps its thread", async t => {
+  const f = await fixture(t), { api } = f;
+  const c = await api.createThread(CHANNEL);
+  const row = [...f.table("workspace_records").values()].find(r => r.data?.id === c.id)!;
+  for (let i = 0; i < 30; i++) row.data.messages.push({ id: "m" + i, role: i % 2 ? "assistant" : "user", content: i % 2 ? `jawaban ${i}` : `pesan ${i}`, created_at: new Date().toISOString() });
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan A" });
+  await until(async () => !!((await api.getThread(CHANNEL, c.id)) as any).summary, "the summary");
+  const folded = await api.getThread(CHANNEL, c.id) as any;
+  assert.match(folded.summary, /^RINGKASAN: pemilik melarang node If dan Wait\.$/, "reasoning tags are stripped");
+  assert.ok(folded.summarized >= 12);
+  assert.equal(folded.messages.length, 33, "the chat itself still shows every message");
+
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan B" });
+  await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "the second run");
+  assert.match(f.seen.system.at(-1)!, /RINGKASAN CHAT INI SEBELUMNYA[\s\S]*RINGKASAN: pemilik melarang node If dan Wait\./);
+  assert.ok(f.seen.sizes.at(-1)! < f.seen.sizes[0], `the model got fewer messages (${f.seen.sizes.at(-1)}) than before the fold (${f.seen.sizes[0]})`);
 });
