@@ -147,10 +147,13 @@ async function mutate(ctx:ToolContext,label:string,change:(wf:Json)=>string|void
 function summarizeExecution(exec:Json){
   const result=exec.data?.resultData||{},nodes:Json[]=[];
   for(const [name,runs] of Object.entries<Json[]>(result.runData||{})){
-    const last=runs.at(-1)||{},first=last.data?.main?.[0]?.[0]?.json;
-    nodes.push({node:name,runs:runs.length,...(last.error?{error:text(last.error.message,300)}:{}),...(first?{output:text(first.text??first,500)}:{})});
+    const last=runs.at(-1)||{},first=last.data?.main?.[0]?.[0]?.json,items=last.data?.main?.[0]?.length??0;
+    nodes.push({node:name,runs:runs.length,items,...(last.error?{error:text(last.error.message,300)}:{}),...(first?{output:text(first.text??first,500)}:{})});
   }
-  return {id:exec.id,status:exec.status,finished:exec.finished,startedAt:exec.startedAt,stoppedAt:exec.stoppedAt,...(result.error?{error:text(result.error.message,300)}:{}),lastNode:result.lastNodeExecuted,nodes};
+  // n8n does not run the nodes after one that outputs nothing, yet the execution still reads "success".
+  const stoppedAt=nodes.find(n=>n.node===result.lastNodeExecuted&&n.items===0&&!n.error);
+  return {id:exec.id,status:exec.status,finished:exec.finished,startedAt:exec.startedAt,stoppedAt:exec.stoppedAt,...(result.error?{error:text(result.error.message,300)}:{}),lastNode:result.lastNodeExecuted,
+    ...(stoppedAt?{halted:`Berhenti di "${stoppedAt.node}": node itu mengeluarkan 0 item, jadi node sesudahnya tidak dijalankan walaupun statusnya ${exec.status}. Untuk node baca berkas: berkas tidak ada, path salah, atau folder belum terpasang di n8n.`}:{}),nodes};
 }
 
 // A failing action becomes a failed result the assistant can read and react to; it never ends the run.

@@ -17,7 +17,7 @@ async function fixture(t: TestContext) {
   const { db } = await import("../apps/web/src/server/pocketbase");
   const { defaultChannelPreferences } = await import("../packages/core/src/workspace");
   const vault = await mkdtemp(path.join(os.tmpdir(), "assistant-threads-")); await mkdir(path.join(vault, "Arthur"), { recursive: true });
-  const seen: { system: string[]; sizes: number[]; tokens: unknown[]; efforts: unknown[]; lastUser: string[]; learn: number } = { system: [], sizes: [], tokens: [], efforts: [], lastUser: [], learn: 0 };
+  const seen: { system: string[]; sizes: number[]; tokens: unknown[]; efforts: unknown[]; lastUser: string[]; learn: number; all: string[] } = { system: [], sizes: [], tokens: [], efforts: [], lastUser: [], learn: 0, all: [] };
   const tables = new Map<string, Map<string, any>>(); let sequence = 0;
   const table = (name: string) => { if (!tables.has(name)) tables.set(name, new Map()); return tables.get(name)!; };
   table("channels").set(CHANNEL, { id: CHANNEL, name: "Arthur" });
@@ -60,7 +60,7 @@ async function fixture(t: TestContext) {
         if (String(messages[0].content).startsWith("Kamu menjaga memori")) { seen.learn++; return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ notes: ["Path decision log Not Yet ada di /vault/Not Yet/decision-log.md", "kunci api: sk-abcdefghijklmnop1234"], rules: ["Jangan pernah menambah node If atau Wait"] }) } }] }), { status: 200 }); }
         return new Response(JSON.stringify({ choices: [{ message: { content: "<think>x</think>RINGKASAN: pemilik melarang node If dan Wait." } }] }), { status: 200 });
       }
-      seen.system.push(String(messages[0].content)); seen.sizes.push(messages.length); seen.tokens.push(body.max_tokens); seen.efforts.push(body.reasoning_effort); seen.lastUser.push(String(users.at(-1).content));
+      seen.system.push(String(messages[0].content)); seen.sizes.push(messages.length); seen.tokens.push(body.max_tokens); seen.efforts.push(body.reasoning_effort); seen.lastUser.push(String(users.at(-1).content)); seen.all.push(JSON.stringify(messages));
       const followUp = String(users.at(-1).content).startsWith("[Sistem] Hasil aksi");
       const who = [...users.map(m => String(m.content)).join("\n").matchAll(/kerjakan (\w)/g)].at(-1)![1];
       // Misbehaving models: only reasoning came back (E once, Z always), or the answer sits in an unclosed <think> (T).
@@ -72,6 +72,9 @@ async function fixture(t: TestContext) {
         const nudged = String(users.at(-1).content).includes("Jawabanmu sebelumnya kosong");
         if (who === "Z" || (who === "E" && !nudged)) return plain(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "Saya menimbang permintaan ini…" } }] })}\n\n` + done("length"));
         if (who === "E") return plain(sse("Sudah saya kerjakan.") + done("stop"));
+        // M: answers with only a stand-in "(menjalankan aksi)" (until asked again). Q: an action and no prose at all.
+        if (who === "M") return plain(sse(nudged ? "Jawaban yang sebenarnya." : "(menjalankan aksi)") + done("stop"));
+        if (who === "Q") return plain(sse("```json\n" + JSON.stringify({ actions: [{ action: "add_n8n_node", name: "Dari Q", node_type: "n8n-nodes-base.set" }] }) + "\n```") + done("stop"));
         // U: the action as plain JSON with no code fence, with braces inside a string. N: a plan of 3 steps (more than the 2-node budget).
         if (who === "U") return plain(sse("Saya tambahkan satu node.\n{\"actions\":[{\"action\":\"add_n8n_node\",\"name\":\"Dari U\",\"node_type\":\"n8n-nodes-base.set\",\"parameters\":{\"text\":\"={{ $json.x }} } {\"}}]}") + done("stop"));
         if (who === "N") return plain(sse("Saya susun rencananya.\n```json\n" + JSON.stringify({ actions: [{ action: "propose_plan", steps: [
@@ -442,4 +445,18 @@ test("a customised workflow is never rebuilt from the recipe by accident", async
   assert.deepEqual(names, ["Mulai", "Kirim ke Telegram"], "the hand-made workflow was saved first");
 
   await build(CHANNEL, {}); // a workflow that only has recipe nodes can be refreshed without fuss
+});
+
+// Regression from a real chat: the owner got "(menjalankan aksi)" as the whole answer; the placeholder had been imitated.
+test("a stand-in like \"(menjalankan aksi)\" is never an answer, and is never shown to the model", async t => {
+  const f = await fixture(t), { api } = f, c = await api.createThread(CHANNEL), idle = async (label: string) => until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", label);
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan M" }); await idle("the first run");
+  const first = await api.getThread(CHANNEL, c.id) as any;
+  assert.deepEqual(first.messages.map((m: any) => [m.role, m.content]), [["user", "kerjakan M"], ["assistant", "Jawaban yang sebenarnya."]], "the stand-in was treated as no answer, so the model was asked again");
+
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan Q" }); await idle("an action-only reply");
+  assert.ok(f.workflow.nodes.some((n: any) => n.name === "Dari Q"), "an action with no prose still runs");
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan E" }); await idle("the next message");
+  assert.ok(f.seen.all.length > 3);
+  assert.ok(f.seen.all.every(m => !m.includes("(menjalankan aksi)")), "no stand-in text ever reaches the model");
 });

@@ -132,3 +132,21 @@ test("overwritten work can be restored from the copy n8n keeps in an execution, 
     assert.equal((await runTool(ours, { action: "restore_from_execution" })).ok, false);
   } finally { n8n.restore(); }
 });
+
+// Regression from a real chat: an execution read "success" but stopped at "Baca Ledger", and nobody could say why.
+test("a successful execution that stopped at a node with no output says exactly where and why", async () => {
+  const n8n = fakeN8n();
+  try {
+    const { runTool } = await tools(), ctx = { channel: "chan", workflowId: "wf1", snaps: [] as any[] };
+    n8n.state.executions["24"] = { id: 24, status: "success", data: { resultData: { lastNodeExecuted: "Baca Ledger", runData: {
+      "Resep Studio1": [{ data: { main: [[{ json: { brief: "x" } }]] } }], "Baca Ledger": [{ data: { main: [[]] } }] } } } };
+    const read = await runTool(ctx, { action: "get_execution", execution_id: "24" });
+    assert.equal(read.ok, true);
+    const summary = JSON.parse(String(read.data));
+    assert.match(summary.halted, /Berhenti di "Baca Ledger".*0 item.*node sesudahnya tidak dijalankan.*berkas tidak ada/);
+    assert.deepEqual(summary.nodes.map((n: any) => [n.node, n.items]), [["Resep Studio1", 1], ["Baca Ledger", 0]]);
+    // A run that really finished does not get a false alarm.
+    n8n.state.executions["25"] = { id: 25, status: "success", data: { resultData: { lastNodeExecuted: "Kirim", runData: { "Kirim": [{ data: { main: [[{ json: { ok: true } }]] } }] } } } };
+    assert.equal(JSON.parse(String((await runTool(ctx, { action: "get_execution", execution_id: "25" })).data)).halted, undefined);
+  } finally { n8n.restore(); }
+});

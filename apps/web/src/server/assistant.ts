@@ -241,9 +241,10 @@ function modelMessages(thread:Thread,fresh:Attachment[],extra:string,tail=""){
       if(m===lastUser&&extra)text+=extra;
       const images=(m===lastUser&&fresh.length?fresh:m.attachments||[]).filter(a=>a.type?.startsWith("image/")&&a.url);
       out.push(images.length?{role:"user",content:[{type:"text",text},...images.map(a=>({type:"image_url",image_url:{url:a.url}}))]}:{role:"user",content:text});
-    // An empty reply with no actions says nothing; showing it back as a placeholder only confuses the model.
+    // A reply with no words is left out (only its results are shown). A placeholder text here gets imitated:
+    // the model once answered the owner with nothing but "(menjalankan aksi)".
     }else if(m.content||m.actions?.length){
-      out.push({role:"assistant",content:m.content||"(menjalankan aksi)"});
+      if(m.content)out.push({role:"assistant",content:m.content});
       if(m.actions?.length)out.push({role:"user",content:resultBlock(m.actions,index>=list.length-2)+(index===list.length-1?FOLLOW_UP:"")});
     }
   });
@@ -311,6 +312,8 @@ async function run(channel:string,id:string,fresh:Attachment[],controller:AbortC
       let {visible,actions}=extractActions(out.content);const results:ActionResult[]=[],waiting:{action:Record<string,any>;reason:string}[]=[];
       // A model that writes its own "[Hasil aksi]" is cut off there: only the server reports results.
       if(FABRICATED.test(visible)){fabricated=true;visible=visible.replace(FABRICATED,"").trim();}
+      // A stand-in like "(menjalankan aksi)" is not an answer: it counts as no words at all.
+      if(/^\(?\s*menjalankan aksi\s*\)?\.?$/i.test(visible))visible="";
       // Some models write their whole answer inside a <think> block they never close; the actions are still there.
       if(!visible&&!actions.length&&out.think)actions=extractActions(out.think).actions;
       if(!visible&&!actions.length&&!controller.signal.aborted){
