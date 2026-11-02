@@ -1,7 +1,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
-import { mkdtemp, readFile, rm, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 registerHooks({ resolve(specifier, context, nextResolve) { return specifier === "server-only" ? { url: new URL("./server-only-fixture.cjs", import.meta.url).href, shortCircuit: true } : nextResolve(specifier, context); } });
@@ -104,4 +104,41 @@ test("the Memori panel can list and delete what was remembered", async t => {
   await assert.rejects(f.removeNote("Arthur", "memory", "  "), /bagian catatan/);
   assert.equal(await f.removeNote("Arthur", "rules", "node if"), 1);
   assert.deepEqual(await f.noteLines("Arthur", "rules"), []);
+});
+
+// Regression from a real chat: a big restructuring could only be written as one huge replace and never became approvable.
+test("a plan is all-or-nothing, allows only small steps, and backs the workflow up to the vault first", async t => {
+  const f = await fixture(t), ctx = f.ctx(), original = JSON.stringify(f.workflow);
+  const plan = { action: "propose_plan", steps: [{ action: "add_n8n_node", name: "A1", node_type: "n8n-nodes-base.set", connect_from: "Mulai" }, { action: "add_n8n_node", name: "A2", node_type: "n8n-nodes-base.set", connect_from: "A1" }, { action: "add_n8n_node", name: "A3", node_type: "n8n-nodes-base.set", connect_from: "A2" }] };
+  const held = await f.runTool({ ...ctx, budget: { adds: 2 } }, plan);
+  assert.ok(held.approval); assert.match(held.approval!, /rencana 3 langkah/); assert.equal(JSON.stringify(f.workflow), original, "nothing ran without the owner");
+
+  // One failing step puts everything back, including the steps that already worked.
+  const bad = await f.runTool({ ...ctx, approved: true }, { action: "propose_plan", steps: [{ action: "add_n8n_node", name: "B1", node_type: "n8n-nodes-base.set" }, { action: "modify_n8n_node", node_name: "Tidak ada", prompt: "x" }] });
+  assert.equal(bad.ok, false); assert.match(bad.message, /langkah 2.*gagal.*dikembalikan/i);
+  assert.deepEqual(f.workflow.nodes.map((n: any) => n.name), ["Mulai"], "the first step was rolled back"); assert.equal(ctx.snaps.length, 0);
+
+  for (const step of [{ action: "replace_workflow", nodes: [], connections: {} }, { action: "rebuild_from_recipe" }, { action: "publish_n8n_workflow", active: true }, { action: "propose_plan", steps: [] }])
+    assert.equal((await f.runTool({ ...ctx, approved: true }, { action: "propose_plan", steps: [step] })).ok, false, "not allowed inside a plan: " + step.action);
+  assert.equal((await f.runTool({ ...ctx, approved: true }, { action: "propose_plan", steps: Array.from({ length: 41 }, (_, i) => ({ action: "add_n8n_node", name: "N" + i })) })).ok, false, "at most 40 steps");
+  assert.equal((await f.runTool({ ...ctx, approved: true }, { action: "propose_plan", steps: [] })).ok, false);
+
+  const done = await f.runTool({ ...ctx, approved: true }, plan);
+  assert.equal(done.ok, true, done.message);
+  assert.deepEqual(f.workflow.nodes.map((n: any) => n.name), ["Mulai", "A1", "A2", "A3"]); assert.deepEqual(done.changes!.added, ["A1", "A2", "A3"]);
+  assert.equal(ctx.snaps.length, 1, "one restore point for the whole plan"); assert.match(ctx.snaps[0].label, /Sebelum rencana \(3 langkah\)/);
+  assert.equal((await f.runTool(ctx, { action: "undo_last_change" })).ok, true);
+  assert.deepEqual(f.workflow.nodes.map((n: any) => n.name), ["Mulai"], "and the whole plan is undone together");
+
+  // Every plan was backed up in the vault before it ran, so the work never lives only in n8n.
+  const dir = path.join(f.directory, "Arthur", "Workflow Backup"), files = await readdir(dir);
+  assert.ok(files.length >= 2, files.join(", "));
+  assert.deepEqual(JSON.parse(await readFile(path.join(dir, files[0]), "utf8")).nodes.map((n: any) => n.name), ["Mulai"]);
+});
+
+test("workflow backups keep only the newest 20", async t => {
+  const f = await fixture(t);
+  for (let i = 0; i < 25; i++) await f.saveBackup("Arthur", "sebelum uji " + i, { nodes: [i] });
+  const files = (await readdir(path.join(f.directory, "Arthur", "Workflow Backup"))).sort();
+  assert.equal(files.length, 20); assert.match(files.at(-1)!, /sebelum-uji-24\.json$/);
 });

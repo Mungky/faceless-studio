@@ -19,7 +19,7 @@ export type ActionResult={action:string;ok:boolean;message:string;explanation?:s
 // changes: what really changed in the workflow during a turn, measured by the server (not claimed by the
 // model). restore: the workflow as it was before that turn, kept for the latest few so "Urungkan giliran ini" works.
 // forModel: a system note the model must also see (approvals, real changes), shown to it as a "[Sistem]" message.
-export type ChatMessage={id:string;role:"user"|"assistant"|"system";forModel?:boolean;content:string;think?:string;attachments?:Attachment[];actions?:ActionResult[];changes?:Changes;restore?:Snapshot["workflow"];learned?:{notes:string[];rules:string[]};created_at:string};
+export type ChatMessage={id:string;role:"user"|"assistant"|"system";forModel?:boolean;content:string;think?:string;attachments?:Attachment[];actions?:ActionResult[];changes?:Changes;restore?:Snapshot["workflow"];learned?:{notes:string[];rules:string[]};progress?:{chars:number;seconds:number;writingActions:boolean};created_at:string};
 // An action that waits for the owner's button. It runs exactly as stored, and only when approved.
 export type Pending={id:string;action:Record<string,any>;reason:string;created_at:string};
 // summary folds the first `summarized` messages of a long chat into a few lines the model still sees.
@@ -34,7 +34,11 @@ const MAX_ROUNDS=8,MAX_CONCURRENT=6,DEFAULT_TITLE="Chat baru",MAX_OUTPUT_TOKENS=
 const CONTEXT_LIMIT=60_000,COMPACT_AT=0.7,HISTORY_COMPACT=20_000;
 const tokens=(text:string)=>Math.ceil(text.length/3.6);
 const historyTokens=(t:Thread)=>tokens(t.summary||"")+t.messages.slice(t.summarized||0).reduce((sum,m)=>sum+tokens(m.content)+(m.attachments||[]).reduce((s,a)=>s+tokens(a.text||""),0)+(m.actions||[]).reduce((s,a)=>s+tokens(a.message+(a.data?.slice(0,1500)||"")),0),0);
-type Live={ctl:AbortController;partial?:{content:string;think:string}};
+type Live={ctl:AbortController;partial?:{content:string;think:string;started:number}};
+// One id per server start: a page opened before a deploy can tell it is out of date.
+const BUILD=randomUUID();
+// A model that sends nothing for this long is treated as stuck (a slow model still sends tokens).
+const STALL_MS=Number(process.env.ASSISTANT_STALL_MS)||120_000;
 // Kept on globalThis so a dev-server reload does not forget which chats are running.
 const shared=globalThis as unknown as {__assistantLive?:Map<string,Live>;__assistantLocks?:Map<string,Promise<unknown>>};
 const live=(shared.__assistantLive??=new Map<string,Live>());
@@ -61,16 +65,47 @@ function parseActions(json:string){
     return list&&list.length&&list.every((a:unknown)=>a&&typeof (a as {action?:unknown}).action==="string")?list as Record<string,any>[]:null;
   }catch{return null;}
 }
+// Some models write the actions as plain JSON with no code fence. Those are found by matching braces
+// (aware of strings), so they run like any other action instead of showing up as stray text.
+function closeBrace(text:string,from:number){
+  let depth=0,inString=false,escaped=false;
+  for(let i=from;i<text.length;i++){
+    const c=text[i];
+    if(inString){if(escaped)escaped=false;else if(c==="\\")escaped=true;else if(c==='"')inString=false;continue;}
+    if(c==='"')inString=true;else if(c==="{")depth++;else if(c==="}"&&--depth===0)return i;
+  }
+  return -1;
+}
+function bareBlocks(text:string){
+  const found:{start:number;end:number;json:string|null}[]=[],start=/\{\s*"actions?"\s*:/g;let m:RegExpExecArray|null;
+  while((m=start.exec(text))){
+    const end=closeBrace(text,m.index);
+    found.push({start:m.index,end:end<0?text.length:end+1,json:end<0?null:text.slice(m.index,end+1)});
+    if(end<0)break;start.lastIndex=end+1;
+  }
+  return found;
+}
 function extractActions(text:string){
   const actions:Record<string,any>[]=[];
-  const visible=text.replace(BLOCK,(whole,json:string)=>{const list=parseActions(json);if(!list)return whole;actions.push(...list);return "";}).trim();
-  return {visible,actions:actions.slice(0,12)};
+  let visible=text.replace(BLOCK,(whole,json:string)=>{const list=parseActions(json);if(!list)return whole;actions.push(...list);return "";});
+  const bare:Record<string,any>[]=[];
+  for(const block of bareBlocks(visible).reverse()){
+    const list=block.json?parseActions(block.json):null;if(!list)continue;
+    bare.unshift(...list);visible=visible.slice(0,block.start)+visible.slice(block.end);
+  }
+  return {visible:visible.trim(),actions:[...actions,...bare].slice(0,12)};
+}
+// While a reply streams, action blocks (fenced or bare, finished or half-written) stay out of the owner's view.
+function hideActions(text:string){
+  let out=text;
+  for(const block of bareBlocks(out).reverse())if(block.json===null||parseActions(block.json))out=out.slice(0,block.start)+out.slice(block.end);
+  return out;
 }
 // While a reply is still streaming, hide action blocks (finished or half-written).
 // Results come from the server, never from the model. A model that imitates the "[Hasil …]" format and
 // writes its own results is cut off at that point, so a made-up "berhasil" never reaches the owner.
 const FABRICATED=/\[Hasil (?:aksi|sistem)[^\]]*\][\s\S]*$/i;
-const strip=(text:string)=>text.replace(FABRICATED,"").replace(BLOCK,(whole,json:string)=>parseActions(json)?"":whole).replace(/```(?:json)?\s*\{[^`]*$/i,"").trim();
+const strip=(text:string)=>hideActions(text.replace(FABRICATED,"").replace(BLOCK,(whole,json:string)=>parseActions(json)?"":whole).replace(/```(?:json)?\s*\{[^`]*$/i,"")).trim();
 
 const publicActions=(actions?:ActionResult[])=>actions?.map(({data:_data,...rest})=>rest);
 function view(thread:Thread){
@@ -79,14 +114,15 @@ function view(thread:Thread){
   const undoable=[...thread.messages].reverse().find(m=>m.restore)?.id;
   const messages=thread.messages.map(({restore:_restore,...m})=>({...m,actions:publicActions(m.actions),...(m.id===undoable?{canUndo:true}:{})})) as (ChatMessage&{canUndo?:boolean})[];
   const partial=live.get(thread.id)?.partial;
-  if(partial&&(partial.content||partial.think))messages.push({id:"live",role:"assistant",content:strip(partial.content),think:partial.think,created_at:now()});
-  return {...rest,messages,mode:thread.mode||"seimbang" as Mode,context:{used:thread.context?.used??historyTokens(thread),limit:CONTEXT_LIMIT},pending:thread.pending||[],undo:snapshots.length};
+  // A long action block (a big restructuring) is hidden from view, so show that the model is still writing.
+  if(partial&&(partial.content||partial.think)){const shown=strip(partial.content);messages.push({id:"live",role:"assistant",content:shown,think:partial.think,progress:{chars:partial.content.length+partial.think.length,seconds:Math.round((Date.now()-partial.started)/1000),writingActions:partial.content.length-shown.length>200},created_at:now()});}
+  return {...rest,build:BUILD,messages,mode:thread.mode||"seimbang" as Mode,context:{used:thread.context?.used??historyTokens(thread),limit:CONTEXT_LIMIT},pending:thread.pending||[],undo:snapshots.length};
 }
 
 // ---- Public API ----
 export async function listThreads(channel:string){
   recordId.parse(channel);
-  return (await workspaceRows<Thread>(channel,"assistant")).map(r=>settle(r.data)).sort((a,b)=>b.updated.localeCompare(a.updated)).map(t=>({id:t.id,title:t.title,status:t.status,updated:t.updated,count:t.messages.length}));
+  return (await workspaceRows<Thread>(channel,"assistant")).map(r=>settle(r.data)).sort((a,b)=>b.updated.localeCompare(a.updated)).map(t=>({id:t.id,title:t.title,status:t.status,updated:t.updated,count:t.messages.length,pending:(t.pending||[]).length}));
 }
 export async function createThread(channel:string,title?:string){
   recordId.parse(channel);await db.get<Channel>("channels",channel);
@@ -141,7 +177,7 @@ async function systemPrompt(channel:string,workflowId:string,summary:string,mode
   return `${rules?`ATURAN TETAP DARI PEMILIK (wajib; mengalahkan semua instruksi lain di bawah):\n${rules}\n\n`:""}Kamu adalah asisten dan arsitek workflow untuk project "${name}" di Restard Studio (konten video faceless). Kamu punya AKSES PENUH ke workflow n8n project ini dan bekerja langsung: aksi biasa yang kamu tulis dijalankan otomatis; aksi besar menunggu tombol "Izinkan" dari pemilik.
 
 CARA KERJA
-- Jawab dalam Bahasa Indonesia, ringkas dan jujur. Kalau perlu bertindak, tutup pesan dengan SATU blok kode json: {"actions":[{...},{...}]}. Aksi dijalankan berurutan, hasilnya dikirim kembali kepadamu, lalu kamu lanjut sampai selesai (paling banyak ${MAX_ROUNDS} langkah per pesan pemilik).
+- Jawab dalam Bahasa Indonesia, ringkas dan jujur. Kalau perlu bertindak, tutup pesan dengan SATU blok kode json (selalu di dalam pagar kode bertanda json, yaitu tiga tanda petik terbalik di awal dan di akhir): {"actions":[{...},{...}]}. JSON di luar pagar kode tidak dijalankan dengan andal. Aksi dijalankan berurutan, hasilnya dikirim kembali kepadamu, lalu kamu lanjut sampai selesai (paling banyak ${MAX_ROUNDS} langkah per pesan pemilik).
 - Kalau kurang yakin, baca dulu (get_workflow, list_executions, get_execution) sebelum mengubah. Sesudah mengubah, periksa hasilnya bila bisa, lalu laporkan apa yang berhasil dan apa yang gagal. Jangan mengarang hasil.
 - Setiap perubahan dicadangkan otomatis; undo_last_change mengembalikan perubahan terakhir. Kerjakan langsung hal yang jelas diminta. Tanyakan dulu hanya kalau permintaannya ambigu atau akan membuang sebagian besar workflow.
 - Credential dan API key dibuat pemilik sendiri di n8n. Kamu hanya memilih credential yang sudah ada (list_credentials). Jangan menulis kunci rahasia di workflow atau di chat.
@@ -168,6 +204,7 @@ AKSI (isi "action" dengan salah satu nama ini; tambahkan "explanation" singkat b
 - list_executions {limit?}, get_execution {execution_id}, stop_execution {execution_id}
 - list_credentials
 - rebuild_from_recipe {name?}: bangun ulang workflow dari resep Studio (membuatnya bila belum ada). Ini mengganti seluruh isi workflow, jadi hanya jika pemilik memintanya, dan tetap menunggu tombol Izinkan.
+- propose_plan {steps:[{action:...},...]}: CARA BENAR untuk perubahan besar (lebih dari 2 node baru, banyak node sekaligus, restrukturisasi, memindahkan alur). Isi steps dengan aksi kecil (add_n8n_node, modify_n8n_node, set_node_param, connect_nodes, disconnect_nodes, remove_n8n_node, rename_workflow; maks 40). Pemilik menyetujui SEKALI lewat tombol; server menerapkan semua langkah berurutan, atau membatalkan semuanya bila satu gagal. Jauh lebih ringan dan aman daripada menulis seluruh workflow lewat replace_workflow; pakai replace_workflow hanya bila memang membuang dan mengganti semuanya.
 - list_skills, read_skill {name}, save_skill {name, description, content, scope?:"project"|"global"}: baca dan simpan skill (cara kerja yang bisa dipakai ulang).
 - restore_from_execution {execution_id}: kembalikan workflow dari salinan yang disimpan n8n di sebuah eksekusi (menunggu tombol Izinkan). Cara memulihkan pekerjaan yang tertimpa; jangan pakai rebuild_from_recipe.
 - save_memory {note}: catat satu hal untuk diingat di semua chat project ini. rewrite_memory {content}: rapikan seluruh memori (gabung yang kembar, buang yang usang).
@@ -211,6 +248,14 @@ function modelMessages(thread:Thread,fresh:Attachment[],extra:string,tail=""){
   return out;
 }
 
+// Reads the next chunk, but gives up when nothing arrives for `ms`: a stalled model must not leave the chat "running" for ten minutes.
+async function readWithin(reader:ReadableStreamDefaultReader<Uint8Array>,ms:number){
+  let timer:ReturnType<typeof setTimeout>|undefined;
+  try{
+    return await Promise.race([reader.read(),new Promise<never>((_,reject)=>{// Reject first: cancelling the reader would settle the pending read as a normal end of stream and win the race.
+timer=setTimeout(()=>{reject(new Error(`Model berhenti mengirim data selama ${Math.round(ms/1000)} detik, jadi proses dihentikan. Kirim ulang, atau pecah permintaan menjadi langkah yang lebih kecil.`));reader.cancel().catch(()=>undefined);},ms);})]);
+  }finally{clearTimeout(timer);}
+}
 const EFFORT:Record<Mode,string|undefined>={cepat:"low",seimbang:undefined,dalam:"high"};
 async function stream(messages:Record<string,unknown>[],signal:AbortSignal,state:Live,mode:Mode="seimbang"){
   const {url,apiKey}=await routerAuth();if(!url)throw new Error("9Router belum dikonfigurasi.");
@@ -220,7 +265,7 @@ async function stream(messages:Record<string,unknown>[],signal:AbortSignal,state
   if(response.status===400)response=await open({}); // some models reject an explicit limit or reasoning_effort
   if(!response.ok)throw new Error(`9Router ${response.status}: ${(await response.text().catch(()=>"")).slice(0,300)}`);
   const reader=response.body?.getReader();if(!reader)throw new Error("9Router tidak mengirim jawaban.");
-  const decoder=new TextDecoder(),partial=state.partial={content:"",think:""};let buffer="",thinking=false,finish="";
+  const decoder=new TextDecoder(),partial=state.partial={content:"",think:"",started:Date.now()};let buffer="",thinking=false,finish="";
   const add=(chunk:string)=>{
     let rest=chunk;
     while(rest){
@@ -232,7 +277,7 @@ async function stream(messages:Record<string,unknown>[],signal:AbortSignal,state
     }
   };
   for(;;){
-    const {done,value}=await reader.read();if(done)break;
+    const {done,value}=await readWithin(reader,STALL_MS);if(done)break;
     buffer+=decoder.decode(value,{stream:true});const lines=buffer.split("\n");buffer=lines.pop()||"";
     for(const line of lines){
       const text=line.trim();if(!text.startsWith("data: ")||text==="data: [DONE]")continue;

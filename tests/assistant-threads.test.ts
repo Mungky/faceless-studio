@@ -6,6 +6,8 @@ import os from "node:os";
 import { registerHooks } from "node:module";
 registerHooks({ resolve(specifier, context, nextResolve) { return specifier === "server-only" ? { url: new URL("./server-only-fixture.cjs", import.meta.url).href, shortCircuit: true } : nextResolve(specifier, context); } });
 
+// A model that sends nothing for this long counts as stuck (the real default is 120 s; short here so the test is quick).
+process.env.ASSISTANT_STALL_MS = "1500";
 const CHANNEL = "arthur000000001";
 const until = async (check: () => boolean | Promise<boolean>, label: string) => { for (let i = 0; i < 300; i++) { if (await check()) return; await new Promise(r => setTimeout(r, 10)); } assert.fail("timed out waiting for " + label); };
 const sse = (text: string) => `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`;
@@ -64,6 +66,17 @@ async function fixture(t: TestContext) {
         const nudged = String(users.at(-1).content).includes("Jawabanmu sebelumnya kosong");
         if (who === "Z" || (who === "E" && !nudged)) return plain(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "Saya menimbang permintaan ini…" } }] })}\n\n` + done("length"));
         if (who === "E") return plain(sse("Sudah saya kerjakan.") + done("stop"));
+        // U: the action as plain JSON with no code fence, with braces inside a string. N: a plan of 3 steps (more than the 2-node budget).
+        if (who === "U") return plain(sse("Saya tambahkan satu node.\n{\"actions\":[{\"action\":\"add_n8n_node\",\"name\":\"Dari U\",\"node_type\":\"n8n-nodes-base.set\",\"parameters\":{\"text\":\"={{ $json.x }} } {\"}}]}") + done("stop"));
+        if (who === "N") return plain(sse("Saya susun rencananya.\n```json\n" + JSON.stringify({ actions: [{ action: "propose_plan", steps: [
+          { action: "add_n8n_node", name: "Langkah 1", node_type: "n8n-nodes-base.set", connect_from: "Mulai" },
+          { action: "add_n8n_node", name: "Langkah 2", node_type: "n8n-nodes-base.set", connect_from: "Langkah 1" },
+          { action: "add_n8n_node", name: "Langkah 3", node_type: "n8n-nodes-base.set", connect_from: "Langkah 2" }] }] }) + "\n```") + done("stop"));
+        // W: starts writing, then goes silent forever. L: is in the middle of a long action block that the page hides.
+        if (who === "W" || who === "L") return new Response(new ReadableStream({ start(c) {
+          c.enqueue(new TextEncoder().encode(sse(who === "W" ? "Mulai menulis… " : "Menyusun rencana.\n```json\n{\"actions\":[{\"action\":\"propose_plan\",\"steps\":[{\"action\":\"add_n8n_node\",\"name\":\"" + "x".repeat(400))));
+          init.signal?.addEventListener("abort", () => c.error(new DOMException("aborted", "AbortError")));
+        } }), { status: 200 });
         if (who === "K") return plain(sse("Saya baca skill dulu.\n```json\n" + JSON.stringify({ actions: [{ action: "read_skill", name: "ubah-prompt-dari-playbook" }] }) + "\n```") + done("stop"));
         // F: claims a change and writes its own "[Hasil aksi]", but runs nothing. P: tries to replace the whole workflow.
         if (who === "F") return plain(sse("Sudah saya ganti nama file ke notyet.\n\n[Hasil aksi]\n* modify_n8n_node: berhasil — Node \"Jadikan File .md\" diperbarui.") + done("stop"));
@@ -321,4 +334,57 @@ test("the model is told what really changed after each action, so it can check i
   await api.sendMessage(CHANNEL, c.id, { content: "kerjakan A" });
   await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "the run to finish");
   assert.ok(f.seen.lastUser.some(m => /Perubahan nyata: ditambah: Dari A/.test(m)), f.seen.lastUser.at(-1));
+});
+
+// Regression from a real chat: actions written as plain JSON (no code fence) were shown as text and never ran.
+test("an action written as plain JSON without a code fence still runs, and is not shown as text", async t => {
+  const f = await fixture(t), { api } = f, c = await api.createThread(CHANNEL);
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan U" });
+  await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "the run to finish");
+  const done = await api.getThread(CHANNEL, c.id) as any;
+  assert.ok(f.workflow.nodes.some((n: any) => n.name === "Dari U"), "the node was added");
+  assert.equal(f.workflow.nodes.find((n: any) => n.name === "Dari U").parameters.text, "={{ $json.x }} } {", "braces inside a string do not confuse it");
+  assert.equal(done.messages.find((m: any) => m.role === "assistant").content, "Saya tambahkan satu node.", "no stray JSON in the reply");
+});
+
+// Regression from a real chat: "progress agent stuck". A silent model must not hold the chat for ten minutes.
+test("a model that goes silent is cut off with a clear message instead of leaving the chat stuck", async t => {
+  const f = await fixture(t), { api } = f, c = await api.createThread(CHANNEL), started = Date.now();
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan W" });
+  await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "the stuck run to be ended");
+  const done = await api.getThread(CHANNEL, c.id) as any;
+  assert.ok(Date.now() - started < 8000, "ended by the watchdog, not by the long timeout");
+  assert.ok(done.messages.some((m: any) => m.role === "system" && /Model berhenti mengirim data selama 2 detik/.test(m.content)), JSON.stringify(done.messages.map((m: any) => m.content)));
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan E" }); // and the chat works again
+  await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "the next run");
+});
+
+test("while a long action block is being written the page shows progress instead of looking frozen", async t => {
+  const f = await fixture(t), { api } = f, c = await api.createThread(CHANNEL);
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan L" });
+  await until(async () => ((await api.getThread(CHANNEL, c.id)).messages as any[]).some(m => m.id === "live" && m.progress?.writingActions), "the progress line");
+  const live = ((await api.getThread(CHANNEL, c.id)).messages as any[]).find(m => m.id === "live");
+  assert.equal(live.content, "Menyusun rencana.", "the unfinished action block stays hidden");
+  assert.ok(live.progress.chars > 400);
+  assert.ok(typeof ((await api.getThread(CHANNEL, c.id)) as any).build === "string", "every reply carries the server's build id, so an old page can notice a deploy");
+  await api.stopThread(CHANNEL, c.id);
+  await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "stop");
+});
+
+// Regression from a real chat: a big restructuring was written as one huge replace_workflow and never became approvable.
+test("a multi-step plan needs one approval, applies all steps, and can be undone as one turn", async t => {
+  const f = await fixture(t), { api } = f, c = await api.createThread(CHANNEL);
+  await api.sendMessage(CHANNEL, c.id, { content: "kerjakan N" });
+  await until(async () => (await api.getThread(CHANNEL, c.id)).status === "idle", "the run to finish");
+  let thread = await api.getThread(CHANNEL, c.id) as any;
+  assert.equal(thread.pending.length, 1); assert.match(thread.pending[0].reason, /rencana 3 langkah/);
+  assert.deepEqual(f.workflow.nodes.map((n: any) => n.name), ["Mulai"], "nothing ran before the approval");
+  assert.equal((await api.listThreads(CHANNEL))[0].pending, 1, "the chat list shows that something is waiting");
+
+  thread = await api.approvePending(CHANNEL, c.id, thread.pending[0].id) as any;
+  assert.deepEqual(f.workflow.nodes.map((n: any) => n.name), ["Mulai", "Langkah 1", "Langkah 2", "Langkah 3"]);
+  const report = thread.messages.at(-1);
+  assert.deepEqual(report.changes.added, ["Langkah 1", "Langkah 2", "Langkah 3"]); assert.equal(report.canUndo, true);
+  thread = await api.undoTurn(CHANNEL, c.id, report.id) as any;
+  assert.deepEqual(f.workflow.nodes.map((n: any) => n.name), ["Mulai"], "one click undoes the whole plan");
 });
