@@ -217,6 +217,12 @@ export async function n8nAdvance(id:string,node?:string,alive:()=>boolean=()=>tr
 }
 // Asks n8n to stop an execution (running, or waiting at a review).
 export async function stopN8nExecution(id:string){await n8n("/executions/"+id+"/stop",{method:"POST"});}
+// For the assistant: recent executions of one workflow, and one execution with its per-node results.
+export async function listN8nExecutions(workflowId:string,limit=10){
+  const result=await n8n<{data:{id:string|number;status:string;startedAt?:string;stoppedAt?:string}[]}>("/executions?workflowId="+encodeURIComponent(workflowId)+"&limit="+Math.min(Math.max(limit,1),50));
+  return result.data;
+}
+export async function getN8nExecution(id:string){return execution(id);}
 
 // Approve, revise and sync from the task card or the task agent.
 export async function n8nAction(id:string,input:{action:string;node_id?:string;document_revision?:string}){
