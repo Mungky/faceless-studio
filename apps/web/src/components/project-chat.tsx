@@ -3,12 +3,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
+  BookOpen,
   Brain,
   Check,
   ChevronDown,
   ChevronRight,
   FileText,
+  Gauge,
   Hourglass,
+  Lightbulb,
   Image as ImageIcon,
   Link as LinkIcon,
   LoaderCircle,
@@ -58,6 +61,7 @@ interface Msg {
   actions?: Act[];
   changes?: Changes;
   canUndo?: boolean;
+  learned?: { notes: string[]; rules: string[] };
 }
 // An action waiting for the owner's button; it runs only when approved.
 interface PendingItem {
@@ -65,6 +69,7 @@ interface PendingItem {
   reason: string;
   action: { action?: string; name?: string; node_name?: string; nodes?: { name?: string }[] };
 }
+type Mode = "cepat" | "seimbang" | "dalam";
 interface ThreadView {
   id: string;
   title: string;
@@ -73,7 +78,21 @@ interface ThreadView {
   pending?: PendingItem[];
   notice?: string;
   undo: number;
+  mode?: Mode;
+  context?: { used: number; limit: number };
 }
+// What the assistant knows about this project (kept in the vault, so it survives closing the app).
+interface MemoryData {
+  folder: string;
+  rules: string[];
+  memory: string[];
+  skills: { name: string; description: string; scope: string }[];
+}
+const MODE_HINT: Record<Mode, string> = {
+  cepat: "Jawab langsung dan singkat",
+  seimbang: "Bawaan",
+  dalam: "Menyusun rencana dulu, lalu mencocokkan hasil nyata dengan rencana"
+};
 const hasChanged = (c?: Changes) => !!c && !!(c.added.length || c.removed.length || c.changed.length || c.links || c.meta.length);
 function describePending(p: PendingItem) {
   const a = p.action;
@@ -142,6 +161,8 @@ export function ProjectChat({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [expandedThinks, setExpandedThinks] = useState<Record<string, boolean>>({});
   const [acting, setActing] = useState(false);
+  const [panel, setPanel] = useState(false);
+  const [memory, setMemory] = useState<MemoryData | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -280,6 +301,58 @@ export function ProjectChat({
     }
   };
 
+  const changeMode = async (mode: Mode) => {
+    if (!active) return;
+    try {
+      setThread(await call<ThreadView>({ op: "set_mode", threadId: active, mode }));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  // "Rapikan konteks": fold the older messages into the summary right now.
+  const compact = async () => {
+    if (!active) return;
+    setActing(true);
+    setError("");
+    try {
+      setThread(await call<ThreadView>({ op: "compact", threadId: active }));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setActing(false);
+    }
+  };
+  const loadMemory = async () => {
+    try {
+      setMemory(await call<MemoryData>({ op: "memory" }));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  const toggleMemory = async () => {
+    const next = !panel;
+    setPanel(next);
+    if (next) await loadMemory();
+  };
+  const forget = async (kind: "rules" | "memory", line: string) => {
+    if (!window.confirm("Lupakan catatan ini?\n\n" + line)) return;
+    try {
+      await call({ op: "forget", kind, text: line.replace(/^- (\d{4}-\d{2}-\d{2}: )?/, "") });
+      await loadMemory();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  const forgetSkill = async (name: string, scope: string) => {
+    if (!window.confirm(`Hapus skill "${name}"?`)) return;
+    try {
+      await call({ op: "forget_skill", name, scope });
+      await loadMemory();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
   const handleStop = async () => {
     if (!active) return;
     try {
@@ -357,6 +430,9 @@ export function ProjectChat({
           </div>
           <h2 className="pj-native-name">Studio AI Copilot</h2>
         </div>
+        <button className={"pj-icon-btn" + (panel ? " is-on" : "")} aria-label="Memori dan skill" title="Memori, aturan, dan skill assistant" onClick={() => void toggleMemory()}>
+          <BookOpen size={15} />
+        </button>
         <button className="pj-icon-btn" aria-label="Hapus chat ini" title="Hapus chat ini" onClick={() => void removeChat()} disabled={!active}>
           <Trash2 size={15} />
         </button>
@@ -386,7 +462,72 @@ export function ProjectChat({
         </button>
       </div>
 
+      {/* How full the model's context is, how hard it thinks, and a button to fold old messages into the summary. */}
+      <div className="pj-context">
+        <span className="pj-context-meter" title={`Perkiraan isi konteks: ${(thread?.context?.used ?? 0).toLocaleString("id-ID")} dari ${(thread?.context?.limit ?? 0).toLocaleString("id-ID")} token. Dipadatkan otomatis di atas 70%.`}>
+          <Gauge size={12} /> Konteks {thread?.context ? Math.min(100, Math.round((thread.context.used / thread.context.limit) * 100)) : 0}%
+          <i style={{ ["--p" as string]: (thread?.context ? Math.min(100, (thread.context.used / thread.context.limit) * 100) : 0) + "%" }} />
+        </span>
+        <button type="button" className="pj-undo-btn" disabled={acting || running || !thread} onClick={() => void compact()} title="Lipat pesan lama menjadi ringkasan sekarang">
+          Rapikan konteks
+        </button>
+        <label className="pj-mode" title={MODE_HINT[thread?.mode || "seimbang"]}>
+          Berpikir
+          <select value={thread?.mode || "seimbang"} disabled={!thread || running} onChange={e => void changeMode(e.target.value as Mode)}>
+            <option value="cepat">Cepat</option>
+            <option value="seimbang">Seimbang</option>
+            <option value="dalam">Dalam</option>
+          </select>
+        </label>
+      </div>
+
       <div className="pj-messages-container">
+        {panel ? (
+          <div className="pj-memory">
+            <p className="pj-memory-intro">
+              Yang diingat assistant untuk project ini. Disimpan di vault{memory ? <> (folder <code>{memory.folder}</code>)</> : null}, jadi tidak hilang saat aplikasi ditutup atau di-deploy ulang, dan bisa diedit di Obsidian.
+            </p>
+            {!memory && (
+              <p className="pj-system-note">
+                <LoaderCircle className="spin" size={13} /> Memuat…
+              </p>
+            )}
+            {memory && (
+              <>
+                <h4>Aturan tetap ({memory.rules.length})</h4>
+                {memory.rules.length === 0 && <p className="pj-memory-empty">Belum ada. Ucapkan "jangan pernah…" atau "selalu…" di chat.</p>}
+                {memory.rules.map(l => (
+                  <div key={l} className="pj-memory-row">
+                    <span>{l.replace(/^- /, "")}</span>
+                    <button type="button" className="pj-reject-btn" onClick={() => void forget("rules", l)}>Lupakan</button>
+                  </div>
+                ))}
+                <h4>Memori ({memory.memory.length})</h4>
+                {memory.memory.length === 0 && <p className="pj-memory-empty">Belum ada. Assistant mencatatnya sendiri dari percakapan.</p>}
+                {memory.memory.map(l => (
+                  <div key={l} className="pj-memory-row">
+                    <span>{l.replace(/^- /, "")}</span>
+                    <button type="button" className="pj-reject-btn" onClick={() => void forget("memory", l)}>Lupakan</button>
+                  </div>
+                ))}
+                <h4>Skill ({memory.skills.length})</h4>
+                {memory.skills.map(s => (
+                  <div key={s.scope + s.name} className="pj-memory-row">
+                    <span>
+                      <strong>{s.name}</strong> <small>({s.scope})</small>
+                      <br />
+                      {s.description}
+                    </span>
+                    {s.scope !== "bawaan" && (
+                      <button type="button" className="pj-reject-btn" onClick={() => void forgetSkill(s.name, s.scope)}>Hapus</button>
+                    )}
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        ) : (
+          <>
         {error && (
           <p className="pj-system-note is-error">
             <AlertCircle size={13} /> {error}
@@ -413,7 +554,19 @@ export function ProjectChat({
         )}
         {messages.map(msg =>
           msg.role === "system" ? (
-            hasChanged(msg.changes) ? (
+            msg.learned ? (
+              <div key={msg.id} className="pj-learned">
+                <Lightbulb size={13} />
+                <div>
+                  <strong>{msg.content}</strong>
+                  <ul>
+                    {msg.learned.rules.map(r => <li key={"r" + r}>Aturan: {r}</li>)}
+                    {msg.learned.notes.map(n => <li key={"n" + n}>{n}</li>)}
+                  </ul>
+                  <small>Bisa dihapus lewat tombol buku (Memori).</small>
+                </div>
+              </div>
+            ) : hasChanged(msg.changes) ? (
               <div key={msg.id} className="pj-changes">
                 <strong>{msg.content}</strong>
                 <ul>
@@ -519,6 +672,8 @@ export function ProjectChat({
           </p>
         )}
         {thread?.notice && <p className="pj-system-note">{thread.notice}</p>}
+          </>
+        )}
         <div ref={messagesEndRef} />
       </div>
 
