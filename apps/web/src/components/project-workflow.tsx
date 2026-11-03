@@ -1,22 +1,19 @@
 "use client";
-import {useCallback,useState} from "react";
-import {Sparkles} from "lucide-react";
-import type {WorkflowTemplate} from "@studio/core";
-import {ProjectBar,type ProjectProps} from "./project-studio";
-import {ProjectChat} from "./project-chat";
-import {N8nPane} from "./n8n-pane";
-import {projectPrefs,projectTasks,projectName} from "./project-model";
+
+import { useState, useCallback } from "react";
+import { Sparkles } from "lucide-react";
+import type { WorkflowTemplate } from "@studio/core";
+import { ProjectBar, type ProjectProps } from "./project-studio";
+import { ProjectChat } from "./project-chat";
+import { N8nPane } from "./n8n-pane";
+import { projectPrefs, projectName } from "./project-model";
 import "./workflow-studio.css";
 
-// Workflow: the n8n canvas is the sole workflow engine, paired with a chat assistant
-// that helps the creator design and refine the automation.
+// Workflow: n8n canvas paired with Hermes Agent Copilot chat
 export function ProjectWorkflow(props: ProjectProps & { workflow: WorkflowTemplate; run: string }) {
   const { project, data, workspace, busy, perform, refresh, workflow } = props;
   const [chatOpen, setChatOpen] = useState(true);
   const [reloadEpoch, setReloadEpoch] = useState(0);
-  const tasks = projectTasks(workspace, project);
-  const taskTitle = (r: { episode: string; template_name: string }) =>
-    data.episodes.find(e => e.id === r.episode)?.title || r.template_name;
 
   const channel = data.channels.find(c => c.id === project);
   const name = channel ? projectName(channel, projectPrefs(workspace, project)) : project;
@@ -39,8 +36,6 @@ export function ProjectWorkflow(props: ProjectProps & { workflow: WorkflowTempla
           project={project}
           projectName={name}
           workflow={workflow}
-          tasks={tasks}
-          taskTitle={taskTitle}
           selectedRun=""
           clearRun={() => undefined}
           busy={busy}
@@ -52,7 +47,7 @@ export function ProjectWorkflow(props: ProjectProps & { workflow: WorkflowTempla
       ) : (
         <button className="studio-pill pj-chat-pill" onClick={() => setChatOpen(true)}>
           <Sparkles size={15} />
-          Percakapan
+          Hermes Copilot
         </button>
       )}
     </div>

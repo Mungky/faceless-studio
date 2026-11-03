@@ -15,7 +15,7 @@ export function N8nPane({project,busy,perform,reload}:{project:string;busy:boole
   if(error)return <div className="n8n-empty"><Workflow size={26}/><strong>n8n belum bisa dibuka</strong><p className="danger-text">{error}</p><Button onClick={()=>void load()}><RefreshCw size={13}/>Coba lagi</Button></div>;
   if(!state)return <div className="n8n-empty"><LoaderCircle className="spin" size={20}/><p>Menghubungi n8n…</p></div>;
   if(!state.configured)return <div className="n8n-empty"><Workflow size={26}/><strong>Hubungkan n8n</strong><p>Isi <code>N8N_URL</code> dan <code>N8N_API_KEY</code> di <code>.env</code>, lalu jalankan <code>npm run n8n:proxy</code>.</p></div>;
-  if(!open)return <div className="n8n-empty"><Workflow size={26}/><strong>Belum ada workflow n8n untuk project ini</strong><p>Bangun dari resep Studio sekarang, atau minta assistant di chat: "bangun workflow n8n".</p>
+  if(!open)return <div className="n8n-empty"><Workflow size={26}/><strong>Belum ada workflow n8n untuk project ini</strong><p>Bangun dari resep Studio sekarang untuk mulai merancang automasi di n8n.</p>
     <Button className="primary" busy={busy} onClick={()=>void perform(async()=>{const built=await api<{id:string}>("n8n/projects/"+project+"/build",{});setOpen(built.id);await load();})}><Workflow size={14}/>Bangun dari resep Studio</Button></div>;
   // A loopback editor address only works on the machine that runs the proxy; on a server it must be the proxy's public https domain.
   const loopback=/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])/.test(state.editor),remote=!["127.0.0.1","localhost","[::1]"].includes(window.location.hostname);
