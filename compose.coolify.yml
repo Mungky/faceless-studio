@@ -38,7 +38,9 @@ services:
       WORKER_TOKEN: ${WORKER_TOKEN:?Set WORKER_TOKEN}
       AUTOMATION_TOKEN: ${AUTOMATION_TOKEN:?Set AUTOMATION_TOKEN}
       OAUTH_ENCRYPTION_KEY: ${OAUTH_ENCRYPTION_KEY:?Set a 64-character hexadecimal OAUTH_ENCRYPTION_KEY}
-      VAULT_ROOT: /vault
+      RESTARD_STUDIO_ROOT: ${RESTARD_STUDIO_ROOT:-/mnt/hdd/Restard Studio}
+      VAULT_ROOT: ${RESTARD_STUDIO_ROOT:-/mnt/hdd/Restard Studio}
+      LOCAL_MEDIA_ROOT: ${RESTARD_STUDIO_ROOT:-/mnt/hdd/Restard Studio}
       STUDIO_CACHE_ROOT: /cache
       RCLONE_BIN: /usr/bin/rclone
       RCLONE_CONFIG: /rclone/rclone.conf
@@ -48,6 +50,9 @@ services:
       N8N_EDITOR_URL: ${N8N_EDITOR_URL:-}
       NINEROUTER_URL: ${NINEROUTER_URL:-}
       NINEROUTER_API_KEY: ${NINEROUTER_API_KEY:-}
+      HERMES_AGENT_URL: ${HERMES_AGENT_URL:-http://hermesagent-btzec679zj9o0xpudmraaonp.100.76.32.60.sslip.io}
+      HERMES_AGENT_KEY: ${HERMES_AGENT_KEY:-}
+      HERMES_MODEL: ${HERMES_MODEL:-faceless-creation}
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
       ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-}
       ELEVENLABS_MODEL_ID: ${ELEVENLABS_MODEL_ID:-eleven_v3}
@@ -62,7 +67,7 @@ services:
       PORT: "3000"
       TZ: Asia/Jakarta
     volumes:
-      - /srv/faceless-studio/vault:/vault
+      - /mnt/hdd/Restard Studio:/mnt/hdd/Restard Studio
       - web_cache:/cache
       - /srv/faceless-studio/rclone:/rclone
     expose:

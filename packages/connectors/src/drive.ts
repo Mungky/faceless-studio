@@ -1,9 +1,18 @@
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { copyFile, mkdir, stat } from "node:fs/promises";
 import { run } from "./process";
 
 export interface DriveFile { id: string; path: string; size: number; }
-export const localMediaRoot = () => path.resolve(process.env.LOCAL_MEDIA_ROOT || path.join(process.env.STUDIO_CACHE_ROOT || ".cache", "media"));
+export const localMediaRoot = () => {
+  const custom = process.env.LOCAL_MEDIA_ROOT || process.env.RESTARD_STUDIO_ROOT || process.env.VAULT_ROOT;
+  if (custom) return path.resolve(custom);
+  if (process.platform !== "win32") {
+    if (existsSync("/mnt/hdd/Restard Studio")) return "/mnt/hdd/Restard Studio";
+    if (existsSync("/mnt/hdd")) return "/mnt/hdd/Restard Studio";
+  }
+  return path.resolve(path.join(process.env.STUDIO_CACHE_ROOT || ".cache", "media"));
+};
 function checkedPath(relative: string) {
   if (relative !== "Faceless" && !relative.startsWith("Faceless/")) throw new Error("Invalid Drive path");
   if (relative.split(/[\\/]/).some(p => !p || p === "." || p === "..") || /[\x00-\x1f:]/.test(relative)) throw new Error("Invalid Drive path");
@@ -21,7 +30,15 @@ export class DriveConnector {
     checkedPath(relative);
     return this.config.remote.replace(/\/$/, "") + (this.config.remote.endsWith(":") ? "" : "/") + relative;
   }
-  private localPath(relative: string) { return path.join(this.config.localRoot, ...checkedPath(relative).split(/[\\/]/)); }
+  private localPath(relative: string) {
+    const raw = checkedPath(relative);
+    const clean = raw === "Faceless" ? "" : raw.replace(/^Faceless[\\/]/, "");
+    const destination = path.resolve(this.config.localRoot, ...clean.split(/[\\/]/));
+    if (destination !== this.config.localRoot && !destination.startsWith(this.config.localRoot + path.sep)) {
+      throw new Error("Path escapes Restard Studio storage root");
+    }
+    return destination;
+  }
   private flags() { return this.config.config ? ["--config", this.config.config] : []; }
   async upload(local: string, relative: string, signal?: AbortSignal): Promise<DriveFile> {
     if (this.isLocal) { const destination = this.localPath(relative); await mkdir(path.dirname(destination), { recursive: true }); await copyFile(local, destination); return { id: "local", path: relative, size: (await stat(destination)).size }; }
@@ -48,7 +65,8 @@ export class DriveConnector {
           if (e.isFile()) {
             const parent = e.parentPath || (e as any).path || dir;
             const full = path.join(parent, e.name);
-            const rel = path.relative(this.config.localRoot, full).replace(/\\/g, "/");
+            const inner = path.relative(this.config.localRoot, full).replace(/\\/g, "/");
+            const rel = "Faceless/" + inner;
             const s = await stat(full).catch(() => ({ size: 0 }));
             list.push({ id: "local:" + rel, path: rel, size: s.size });
           }

@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { Channel } from "@studio/core";
 import { channelPreferences } from "./workspace";
+import { vaultRoot } from "./vault";
 
 function findRepoRoot() {
   if (process.env.STUDIO_ROOT) return process.env.STUDIO_ROOT;
@@ -30,9 +31,16 @@ const activeProjectFile = path.resolve(runtimeDir, "active-project.json");
 export async function ensureProjectWorkspace(channel: Channel) {
   const prefs = await channelPreferences(channel.id).catch(() => ({ project_name: "", n8n_workflow_id: "" }));
   const name = (prefs.project_name || channel.name).trim();
-  const projectDir = path.resolve(root, "projects", name);
+  const storageRoot = vaultRoot();
+  const projectDir = path.resolve(storageRoot, name);
+  if (projectDir === storageRoot || !projectDir.startsWith(storageRoot + path.sep)) {
+    throw new Error("Invalid project directory: escapes Restard Studio storage root");
+  }
 
   await mkdir(projectDir, { recursive: true });
+  await mkdir(path.resolve(projectDir, "assets"), { recursive: true });
+  await mkdir(path.resolve(projectDir, "prompts"), { recursive: true });
+  await mkdir(path.resolve(projectDir, "nodes"), { recursive: true });
 
   const agentsMd = `# Restard Studio Agent — Project: ${name}
 
@@ -111,8 +119,18 @@ Kamu terhubung ke n8n melalui MCP Server (\`studio-n8n\`):
 }
 
 export async function removeProjectWorkspace(channelName: string) {
-  const projectDir = path.resolve(root, "projects", channelName);
-  await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
+  const trimmed = channelName.trim();
+  if (!trimmed || trimmed === "." || trimmed === "..") return;
+  const storageRoot = vaultRoot();
+  const projectDir = path.resolve(storageRoot, trimmed);
+  // STRICT ISOLATION GUARD: Must be strictly inside storageRoot and NOT storageRoot itself
+  if (projectDir !== storageRoot && projectDir.startsWith(storageRoot + path.sep)) {
+    await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+  const legacyDir = path.resolve(root, "projects", trimmed);
+  if (legacyDir !== projectDir && legacyDir.startsWith(path.resolve(root, "projects") + path.sep)) {
+    await rm(legacyDir, { recursive: true, force: true }).catch(() => undefined);
+  }
   if (existsSync(activeProjectFile)) {
     try {
       const active = JSON.parse(readFileSync(activeProjectFile, "utf8"));

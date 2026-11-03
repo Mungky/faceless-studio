@@ -5,6 +5,7 @@ import { youtubeFor } from "./service";
 import { DriveConnector, type DriveFile } from "@studio/connectors";
 import { channelPreferences } from "./workspace";
 import { ensureProjectWorkspace } from "./project-workspace";
+import { vaultRoot } from "./vault";
 import path from "node:path";
 import { existsSync } from "node:fs";
 
@@ -134,9 +135,16 @@ export async function projectDriveOutputs(channelId: string) {
   ]);
   const files: DriveFile[] = [...initialFiles];
 
-  // Also discover files in local project directory (projects/<name>/assets or projects/<name>)
-  const localProjectDir = path.resolve(process.cwd(), "projects", name);
-  const localDirs = [path.join(localProjectDir, "assets"), localProjectDir];
+  // Also discover files in local project directory (Restard Studio/<name>/assets, clips, stills, renders, etc.)
+  const localProjectDir = path.resolve(vaultRoot(), name);
+  const localDirs = [
+    path.join(localProjectDir, "assets"),
+    path.join(localProjectDir, "clips"),
+    path.join(localProjectDir, "stills"),
+    path.join(localProjectDir, "renders"),
+    path.join(localProjectDir, "music"),
+    localProjectDir
+  ];
   const mediaExts = new Set([".mp4", ".webm", ".mkv", ".mov", ".mp3", ".wav", ".m4a", ".aac", ".flac", ".jpg", ".jpeg", ".png", ".webp"]);
   const seenPaths = new Set(files.map(f => f.path.toLowerCase()));
 
@@ -175,8 +183,15 @@ export async function syncProjectDriveOutputs(channelId: string) {
   const files: DriveFile[] = [...initialFiles];
 
   // Also include local project files
-  const localProjectDir = path.resolve(process.cwd(), "projects", name);
-  const localDirs = [path.join(localProjectDir, "assets"), localProjectDir];
+  const localProjectDir = path.resolve(vaultRoot(), name);
+  const localDirs = [
+    path.join(localProjectDir, "assets"),
+    path.join(localProjectDir, "clips"),
+    path.join(localProjectDir, "stills"),
+    path.join(localProjectDir, "renders"),
+    path.join(localProjectDir, "music"),
+    localProjectDir
+  ];
   const mediaExts = new Set([".mp4", ".webm", ".mkv", ".mov", ".mp3", ".wav", ".m4a", ".aac", ".flac", ".jpg", ".jpeg", ".png", ".webp"]);
   const seenPaths = new Set(files.map(f => f.path.toLowerCase()));
 

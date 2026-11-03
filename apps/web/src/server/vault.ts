@@ -1,21 +1,28 @@
 import "server-only";
 import path from "node:path";
-import { mkdir, readFile, writeFile, rename, realpath, access, copyFile, readdir, stat } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, writeFile, rename, realpath, access, copyFile, readdir, stat, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { segment, recordId, type Beat, parseStoryboard, serializeStoryboard, z } from "@studio/core";
 
 export const documentNames = ["riset.md", "script.md", "storyboard.md", "upload-pack.md"] as const;
 export type DocumentName = typeof documentNames[number];
 export function vaultRoot() {
-  const root = process.env.VAULT_ROOT;
-  if (!root) throw new Error("Set VAULT_ROOT to the existing Obsidian vault path.");
-  return path.resolve(/* turbopackIgnore: true */ root);
+  const custom = process.env.RESTARD_STUDIO_ROOT || process.env.VAULT_ROOT;
+  if (custom) return path.resolve(/* turbopackIgnore: true */ custom);
+  if (process.platform !== "win32") {
+    if (existsSync("/mnt/hdd/Restard Studio")) return "/mnt/hdd/Restard Studio";
+    if (existsSync("/mnt/hdd")) return "/mnt/hdd/Restard Studio";
+  }
+  return path.resolve(/* turbopackIgnore: true */ process.cwd(), "projects");
 }
 export async function safeVaultPath(relative: string, allowMissing = false) {
-  const root = await realpath(/* turbopackIgnore: true */ vaultRoot());
+  const rootDir = vaultRoot();
+  try { await mkdir(rootDir, { recursive: true }); } catch {}
+  const root = await realpath(/* turbopackIgnore: true */ rootDir);
   const parts = relative.split("/"); for (const part of parts) segment.parse(part);
   const target = path.resolve(root, ...parts);
-  if (!target.startsWith(root + path.sep)) throw new Error("Path is outside the vault");
+  if (!target.startsWith(root + path.sep) && target !== root) throw new Error("Path is outside Restard Studio storage");
   let nearest = target;
   while (true) {
     try { const resolved = await realpath(nearest); if (resolved !== root && !resolved.startsWith(root + path.sep)) throw new Error("Vault symlink escapes its root"); break; }
@@ -72,5 +79,16 @@ export async function writeStoryboardDraft(folder: string, quoteId: string, cont
   await mkdir(path.dirname(target), { recursive: true });
   await safeVaultPath(`${folder}/.studio-drafts`);
   await writeFile(target, content, { flag: "wx" });
+  return relative;
+}
+export async function saveBackup(folder: string, label: string, data: unknown) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-"), slug = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "cadangan";
+  const relative = `${folder}/Workflow Backup/${stamp}-${randomUUID().slice(0, 4)}-${slug}.json`, file = await safeVaultPath(relative, true);
+  await mkdir(path.dirname(file), { recursive: true });
+  const temporary = file + "." + randomUUID() + ".tmp";
+  await writeFile(temporary, JSON.stringify(data, null, 1), { flag: "wx" });
+  await rename(temporary, file);
+  const names = (await readdir(path.dirname(file))).filter(n => n.endsWith(".json")).sort();
+  for (const old of names.slice(0, -20)) await rm(path.join(path.dirname(file), old), { force: true });
   return relative;
 }
