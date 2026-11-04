@@ -11,8 +11,8 @@ export function vaultRoot() {
   const custom = process.env.RESTARD_STUDIO_ROOT || process.env.VAULT_ROOT;
   if (custom) return path.resolve(/* turbopackIgnore: true */ custom);
   if (process.platform !== "win32") {
-    if (existsSync("/mnt/hdd/Restard Studio")) return "/mnt/hdd/Restard Studio";
-    if (existsSync("/mnt/hdd")) return "/mnt/hdd/Restard Studio";
+    if (existsSync("/vault")) return "/vault";
+    if (existsSync("/srv/faceless-studio/vault")) return "/srv/faceless-studio/vault";
   }
   return path.resolve(/* turbopackIgnore: true */ process.cwd(), "projects");
 }
