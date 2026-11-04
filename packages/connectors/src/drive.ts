@@ -8,8 +8,8 @@ export const localMediaRoot = () => {
   const custom = process.env.LOCAL_MEDIA_ROOT || process.env.RESTARD_STUDIO_ROOT || process.env.VAULT_ROOT;
   if (custom) return path.resolve(custom);
   if (process.platform !== "win32") {
-    if (existsSync("/mnt/hdd/Restard Studio")) return "/mnt/hdd/Restard Studio";
-    if (existsSync("/mnt/hdd")) return "/mnt/hdd/Restard Studio";
+    if (existsSync("/vault")) return "/vault";
+    if (existsSync("/srv/faceless-studio/vault")) return "/srv/faceless-studio/vault";
   }
   return path.resolve(path.join(process.env.STUDIO_CACHE_ROOT || ".cache", "media"));
 };

@@ -38,9 +38,9 @@ services:
       WORKER_TOKEN: ${WORKER_TOKEN:?Set WORKER_TOKEN}
       AUTOMATION_TOKEN: ${AUTOMATION_TOKEN:?Set AUTOMATION_TOKEN}
       OAUTH_ENCRYPTION_KEY: ${OAUTH_ENCRYPTION_KEY:?Set a 64-character hexadecimal OAUTH_ENCRYPTION_KEY}
-      RESTARD_STUDIO_ROOT: ${RESTARD_STUDIO_ROOT:-/mnt/hdd/Restard Studio}
-      VAULT_ROOT: ${RESTARD_STUDIO_ROOT:-/mnt/hdd/Restard Studio}
-      LOCAL_MEDIA_ROOT: ${RESTARD_STUDIO_ROOT:-/mnt/hdd/Restard Studio}
+      RESTARD_STUDIO_ROOT: ${RESTARD_STUDIO_ROOT:-/vault}
+      VAULT_ROOT: ${RESTARD_STUDIO_ROOT:-/vault}
+      LOCAL_MEDIA_ROOT: ${RESTARD_STUDIO_ROOT:-/vault}
       STUDIO_CACHE_ROOT: /cache
       RCLONE_BIN: /usr/bin/rclone
       RCLONE_CONFIG: /rclone/rclone.conf
@@ -67,7 +67,7 @@ services:
       PORT: "3000"
       TZ: Asia/Jakarta
     volumes:
-      - /mnt/hdd/Restard Studio:/mnt/hdd/Restard Studio
+      - /srv/faceless-studio/vault:/vault
       - web_cache:/cache
       - /srv/faceless-studio/rclone:/rclone
     expose:
